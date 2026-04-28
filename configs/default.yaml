@@ -1,0 +1,54 @@
+# =============================================================================
+# config/default.yaml · EntroDiff 默认配置（每个实验配置 inherit + override）
+# =============================================================================
+
+# ----- 实验元信息 -----
+experiment:
+  name: "default"            # 子配置（e1_burgers / e2_buckley_leverett / ...）覆盖
+  seed: 0
+  output_dir: "outputs"      # 训练 / 评估产物的本地落地（最终归位到仓库根 Output/balck/）
+
+# ----- 数据 -----
+data:
+  pde: "burgers"             # 选 "burgers" | "buckley_leverett" | "euler_sod"
+  N_x: 256
+  N_t: 101
+  T: 0.5
+  n_samples: 1024
+  ic_type: "random_fourier"
+
+# ----- 模型 -----
+model:
+  type: "bvaware"            # "baseline" | "bvaware"
+  in_channels: 1
+  hidden_dim: 128
+  n_layers: 4
+
+# ----- noise schedule -----
+schedule:
+  type: "viscosity_matched"
+  nu_phys: 0.0               # 0 = inviscid（E1 默认）；E2/E3 视情况覆盖
+  T_d: 1.0
+
+# ----- 损失 -----
+loss:
+  lambda_dsm: 1.0
+  lambda_ent: 0.1
+  lambda_bv: 0.01
+  lambda_burg: 0.01
+
+# ----- 训练 -----
+train:
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-2
+  ema_decay: 0.9999
+  total_steps: 100000
+  log_every: 100
+  ckpt_every: 5000
+
+# ----- 采样 -----
+sample:
+  n_steps: 18                # EDM Heun 默认
+  zeta_obs: 1.0
+  zeta_pde: 1.0

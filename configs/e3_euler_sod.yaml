@@ -1,0 +1,31 @@
+# =============================================================================
+# config/e3_euler_sod.yaml · 实验 E3 — 1D Euler / Sod 激波管
+# =============================================================================
+experiment:
+  name: "E3_euler_sod"
+  seed: 0
+
+data:
+  pde: "euler_sod"
+  N_x: 256
+  T: 0.2
+  n_samples: 2048
+  gamma: 1.4
+
+model:
+  type: "bvaware"
+  in_channels: 3            # (ρ, ρu, E)
+  hidden_dim: 192            # Euler 三通道，加宽
+
+schedule:
+  type: "viscosity_matched"
+  nu_phys: 0.0
+  T_d: 1.0
+
+loss:
+  lambda_ent: 0.1
+  lambda_bv: 0.05
+  lambda_burg: 0.01
+
+train:
+  total_steps: 300000

@@ -1,0 +1,31 @@
+# =============================================================================
+# config/e1_burgers.yaml · 实验 E1 — 1D inviscid Burgers
+# =============================================================================
+# 继承 default.yaml，仅覆盖必要字段。
+
+experiment:
+  name: "E1_burgers"
+  seed: 0
+
+data:
+  pde: "burgers"
+  N_x: 256
+  T: 0.5
+  n_samples: 4096
+
+model:
+  type: "bvaware"            # 主实验：BV-aware；ablation 时切换 "baseline"
+  in_channels: 1
+
+schedule:
+  type: "viscosity_matched"
+  nu_phys: 0.0               # E1 = inviscid，shock 自然形成
+  T_d: 1.0
+
+loss:
+  lambda_ent: 0.1
+  lambda_bv: 0.05
+  lambda_burg: 0.01
+
+train:
+  total_steps: 200000

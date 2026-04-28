@@ -1,0 +1,44 @@
+# ===== 数据（大文件不入库）=====
+data/
+*.npy
+*.npz
+*.hdf5
+*.h5
+
+# ===== 环境配置（每台机器不同）=====
+configs/env_config.yaml
+!configs/env_config.yaml.example
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ===== IDE =====
+.vscode/
+.idea/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== 训练产出 =====
+output/
+experiments/
+logs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+wandb/

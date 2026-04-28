@@ -1,0 +1,22 @@
+# environment configuration for EntroDiff MVP
+# Copy this file to env_config.yaml and adjust the paths for your local machine or server.
+# DO NOT commit env_config.yaml to version control.
+
+# Define the root directories for different components
+paths:
+  # The root directory where datasets are stored
+  data_dir: "D:/A-Nips-Diffussion/Output/black/data"  # Example PC path
+  
+  # The root directory for output artifacts (checkpoints, figures, logs)
+  output_dir: "D:/A-Nips-Diffussion/Output/black/experiments"
+  
+  # Additional path configurations can be added here
+  
+# Hardware constraints and defaults
+hardware:
+  # Default device: cuda, cpu, or mps. Can be overridden in code/scripts.
+  device: "cuda"
+  
+  # For PC testing with limited memory (e.g. 8GB), restrict max batch size / workers.
+  max_batch_size: 64
+  num_workers: 0  # 0 is recommended for Windows testing to avoid multiprocessing issues
