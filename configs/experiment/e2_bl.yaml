@@ -1,0 +1,17 @@
+# Buckley–Leverett 实验配置 (E2)
+experiment:
+  name: "e2_bl_run"
+  epochs: 200                   # 服务器全量训练
+  learning_rate: 2.0e-4
+  
+  nu: 1.0                       # VE-SDE 单位粘度
+  tau_max: 1.0
+  
+  lambda_bv: 0.1                # BV 正则化
+  lambda_dsm: 1.0
+  lambda_time: 1.0              # Godunov 时间一致性 (E2 关键: 非凸通量)
+  
+  heun_steps: 50
+  zeta_pde: 0.0                 # PDE guidance 关闭 (无条件采样)
+  
+  data_file: "bl_1d_N5000_Nx128.npy"  # Buckley-Leverett 数据集
