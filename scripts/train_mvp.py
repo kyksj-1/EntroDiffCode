@@ -21,7 +21,7 @@ from src.utils.env_manager import env, PROJECT_ROOT  # 跨环境单例配置管�
 from src.data.burgers_dataset import BurgersDataset   # 1D Burgers 方程数据加载器 (Godunov 真值解)
 from src.models.score_param import StandardScore      # 标准 EDM 参数化: D_θ(x, σ) → 预估洁净态
 from src.diffusion.schedules import ViscosityMatchedSchedule  # 论文 §3.1: σ²(τ) = 2ντ 的物理匹配调度
-from src.diffusion.losses import get_dsm_loss, get_bv_loss     # 论文 §3.2 / §3.3: L_DSM + L_BV 损失函数
+from src.diffusion.losses import get_dsm_loss, get_bv_loss, get_godunov_time_loss  # §3.2/§3.3: L_DSM + L_BV + L_time
 
 import yaml      # 读取实验超参数 YAML 配置
 import argparse  # 命令行参数解析 (--config 选择实验配置文件)
@@ -88,6 +88,8 @@ def train_mvp():
     # λ_bv: BV 正则化权重 (论文 §3.3，控制解空间 BV 范数约束的强弱)
     #       Baseline 实验设 λ_bv=0，Ours 设 λ_bv>0
     lambda_bv = float(exp_cfg.get("lambda_bv", 0.1))
+    # λ_time: 时间一致性损失权重 (0 = 关闭, >0 = 启用短期物理一致性)
+    lambda_time = float(exp_cfg.get("lambda_time", 0.0))
     # λ_dsm: DSM 损失的权重 (通常固定为 1.0，λ_bv 相对此为惩罚力度)
     lambda_dsm = float(exp_cfg.get("lambda_dsm", 1.0))
 
@@ -157,36 +159,35 @@ def train_mvp():
         log_fp.write(f"# Time: {run_timestamp}\n")
         log_fp.write(f"# Config: {config_path}\n")
         log_fp.write(f"# Device: {device}  Batch: {batch_size}  Workers: {num_workers}\n")
-        log_fp.write(f"# Params: epochs={epochs} lr={lr} nu={nu} tau_max={tau_max} lambda_dsm={lambda_dsm} lambda_bv={lambda_bv}\n")
+        log_fp.write(f"# Params: epochs={epochs} lr={lr} nu={nu} tau_max={tau_max} lambda_dsm={lambda_dsm} lambda_bv={lambda_bv} lambda_time={lambda_time}\n")
         log_fp.write(f"# Data: {data_path}\n")
         log_fp.write(f"# Output: {output_dir}\n")
         log_fp.write(f"#\n")
-        log_fp.write(f"# epoch  loss_total  loss_dsm  loss_bv\n")
+        log_fp.write(f"# epoch  loss_total  loss_dsm  loss_bv  loss_time\n")
         log_fp.flush()
 
     # ========== 4. 训练主循环 ==========
+    # 物理参数: dt, dx 用于 Godunov 时间推进 (生成数据的参数, Nt=100, T=0.5s)
+    dt_phys = 0.005          # 数据生成时的 dt, 对应 T/Nt = 0.5/100
+    dx_phys = 2 * 3.141592653589793 / 128  # 数据生成时的 dx
     print(f"Starting Training on {device} (epoch {start_epoch+1} → {epochs})...")
+    print(f"  lambda_dsm={lambda_dsm} lambda_bv={lambda_bv} lambda_time={lambda_time}")
     for epoch in range(start_epoch, epochs):
         model.train()
         total_loss = 0.0   # 本 epoch 总损失累加值
-        total_dsm = 0.0    # 本 epoch L_DSM 分量累加 (用于监控日志)
-        total_bv = 0.0     # 本 epoch L_BV 分量累加 (用于监控日志)
+        total_dsm = 0.0    # 本 epoch L_DSM 分量累加
+        total_bv = 0.0     # 本 epoch L_BV 分量累加
+        total_time = 0.0   # 本 epoch L_time 分量累加
         
         for batch in train_loader:
             # batch shape: [B, N_time, N_x] → 整条时空轨迹
-            # 论文设定: 目标解分布 ρ_T(u) 锁定在终端时间 T = 0.5 sec
-            #   取其最后一帧 batch[:, -1, :] 即为 ρ_T 的一个样本点 u_T(x)
-            # unsqueeze(1): [B, N_x] → [B, 1, N_x], 增加 channel 维度适配 1D Conv
-            x = batch[:, -1, :].unsqueeze(1).to(device)  # Shape [B, 1, Nx]
+            # x_target: 终端时刻解 u(T, x), 作为扩散模型的目标分布
+            x_target = batch[:, -1, :].unsqueeze(1).to(device)  # [B, 1, Nx]
 
             optimizer.zero_grad()
             
             # 采样连续扩散时间 τ ~ U[0, τ_max]
-            # ViscosityMatchedSchedule.sample_sigma 内部:
-            #   1. 从均匀分布采样 τ
-            #   2. 通过 σ = sqrt(2ντ) 映射为噪声强度
-            # 返回 shape [B] 的 σ 向量，每个样本独立时间步 → 模拟连续时间扩散过程
-            sigmas = schedule.sample_sigma(x.shape[0], device)
+            sigmas = schedule.sample_sigma(x_target.shape[0], device)
             
             # ---- L_DSM: Denoising Score Matching (论文 §3.2) ----
             # 数学形式: E_{x, ε, τ} [‖D_θ(x + σε, σ) - x‖₂²]
@@ -195,22 +196,24 @@ def train_mvp():
             #   2. 构造带噪样本 x_noisy = x + σ·ε
             #   3. 模型预测洁净态: D_x = model(x_noisy, σ)
             #   4. 计算 MSE: ‖D_x - x‖² → 等价于 score matching (对 EDM 参数化)
-            loss_dsm = get_dsm_loss(model, x, sigmas)
+            loss_dsm = get_dsm_loss(model, x_target, sigmas)
             
             # ---- L_BV: Total-Variation 代理损失 (论文 §3.3) ----
-            # 动机: 纯 L_DSM 训练出的解在 shock 处可能模糊/震荡
-            #       BV 约束强制解的梯度在 L¹ 意义下保持有界
-            # 实现: 对预测解 û = D_θ(x_noisy, σ) 计算:
-            #       TV(û) = Σ|û_{i+1} - û_i| / N_x (离散全变差的一阶近似)
-            # 论文对应: 03_method.tex §3.3 方程 L_BV
-            # 注意: MVP 阶段此实为 TV 代理; 未来迭代中将替换为
-            #       真正的 Kruzhkov 熵损失 (L_ent, 需对熵-熵通量对积分)
-            loss_bv = get_bv_loss(model, x, sigmas)
-            
-            # 联合损失: L = λ_dsm·L_DSM + λ_bv·L_BV
-            # Baseline 对照: λ_bv = 0  → 纯 EDM, 验证无 BV 约束时 shock 模糊
-            # Ours (MVP):   λ_bv > 0 → 熵约束生效, 验证 shock 陡度保持
+            loss_bv = get_bv_loss(model, x_target, sigmas)
+
+            # 联合损失: L = λ_dsm·L_DSM + λ_bv·L_BV (+ λ_time·L_time)
             loss = lambda_dsm * loss_dsm + lambda_bv * loss_bv
+
+            # ---- L_time: Godunov 时间一致性 (论文 Theorem 1 的时间连续性) ----
+            # 利用数据集的时间轨迹: 加噪去噪 x_prev → Godunov 推进 → 对比 x_target
+            # 强制去噪输出满足 Burgers 方程的短期物理演化
+            loss_time = torch.tensor(0.0, device=device)
+            if lambda_time > 0:
+                x_prev = batch[:, -2, :].unsqueeze(1).to(device)  # [B, 1, Nx]
+                loss_time = get_godunov_time_loss(
+                    model, x_prev, x_target, sigmas, dt=dt_phys, dx=dx_phys
+                )
+                loss = loss + lambda_time * loss_time
             
             # 反向传播 + 参数更新
             loss.backward()
@@ -220,21 +223,19 @@ def train_mvp():
             total_loss += loss.item()
             total_dsm += loss_dsm.item()
             total_bv += loss_bv.item()
+            total_time += loss_time.item()
 
         # ---- Epoch 结束: 日志输出 ----
-        # 分别报告总损失、DSM 分量、BV 分量，便于:
-        #   1. 监控训练收敛: total_loss 应单调递减
-        #   2. 验证 BV 约束效果: BV 分量应随训练逐渐降低 (解变光滑) 但不过分
-        #   3. 调试超参数: 若 BV 分量远大于 DSM, 需调低 λ_bv
         avg_loss = total_loss / len(train_loader)
         avg_dsm = total_dsm / len(train_loader)
         avg_bv = total_bv / len(train_loader)
+        avg_time = total_time / len(train_loader)
         # 同时输出到 stdout 和 log 文件
         line = (f"Epoch {epoch+1}/{epochs} | Loss: {avg_loss:.6f} "
-                f"(DSM: {avg_dsm:.6f}, BV/TV: {avg_bv:.6f})")
+                f"(DSM: {avg_dsm:.6f}, BV/TV: {avg_bv:.6f}, Time: {avg_time:.6f})")
         print(line)
-        # 写入日志文件: epoch loss_total loss_dsm loss_bv (机器可读格式)
-        log_fp.write(f"{epoch+1:4d}  {avg_loss:.8f}  {avg_dsm:.8f}  {avg_bv:.8f}\n")
+        # 写入日志文件: epoch loss_total loss_dsm loss_bv loss_time (机器可读格式)
+        log_fp.write(f"{epoch+1:4d}  {avg_loss:.8f}  {avg_dsm:.8f}  {avg_bv:.8f}  {avg_time:.8f}\n")
         log_fp.flush()  # 每 epoch 刷新, 实时可读
 
         # ---- Checkpoint 保存 ----
