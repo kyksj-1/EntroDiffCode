@@ -26,10 +26,16 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.utils.env_manager import env, PROJECT_ROOT
 from src.data.burgers_dataset import BurgersDataset
-from src.models.score_param import StandardScore
+from src.models.score_param import StandardScore, BVAwareScore  # 支持两种模型
 from src.diffusion.samplers import entrodiff_heun_sampler
 from src.diffusion.schedules import ViscosityMatchedSchedule
 from src.diffusion.losses import get_dsm_loss  # 可选: 验证 checkpoint 质量
+
+# 模型注册表: 通过 --model_type 参数选择
+MODEL_REGISTRY = {
+    "standard": StandardScore,
+    "bvaware":  BVAwareScore,
+}
 
 # ============================================================================
 # 工具函数
@@ -113,8 +119,21 @@ def eval_viz():
         help="可视化用的 test 样本数量 (默认 4)"
     )
     parser.add_argument(
+        "--model_type", type=str, default="standard",
+        choices=["standard", "bvaware"],
+        help="模型类型: standard=StandardScore, bvaware=BVAwareScore"
+    )
+    parser.add_argument(
+        "--model_dim", type=int, default=None,
+        help="BVAwareScore 的 UNet dim (默认 64, 服务器训练用 128+)"
+    )
+    parser.add_argument(
         "--heun_steps", type=int, default=50,
         help="Heun 采样步数 (覆盖 config 中的值)"
+    )
+    parser.add_argument(
+        "--zeta_pde", type=float, default=None,
+        help="PDE guidance 强度 (覆盖 config, 建议 0.0~1.0)"
     )
     args = parser.parse_args()
 
@@ -127,12 +146,14 @@ def eval_viz():
     nu = float(exp_cfg.get("nu", 0.01))
     tau_max = float(exp_cfg.get("tau_max", 1.0))
     heun_steps = args.heun_steps if args.heun_steps != 50 else int(exp_cfg.get("heun_steps", 50))
-    zeta_pde = float(exp_cfg.get("zeta_pde", 0.0))
+    zeta_pde = args.zeta_pde if args.zeta_pde is not None else float(exp_cfg.get("zeta_pde", 0.0))
     n_samples = args.n_samples
 
     # ========== 2. 加载 test data (Godunov 真值) ==========
     print("[eval] 加载 test split 数据...")
-    data_path = env.data_dir / "burgers_1d_N5000_Nx128.npy"
+    # 支持不同数据集: 默认 Burgers, 可扩展 sharp IC 等变体
+    data_filename = exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
+    data_path = env.data_dir / data_filename
     if not data_path.exists():
         raise FileNotFoundError(
             f"数据文件不存在: {data_path}\n"
@@ -147,22 +168,27 @@ def eval_viz():
     x_grid = np.linspace(0, 2 * np.pi, nx_dim, endpoint=False)  # 空间坐标 (周期域)
 
     # ========== 3. 加载 Ours 模型 ==========
-    # 自动搜索策略: --ckpt_ours 为空 → glob 匹配 exp_name 前缀的最新 ep10.pt
     exp_name = exp_cfg.get("name", "entrodiff_mvp_run1")
     output_dir = env.output_dir / exp_name
     if args.ckpt_ours is None:
-        # 自动搜索: 先按 *_ep10.pt 精确匹配, 否则按 prefix_* 取最新
         ckpt_ours_path = find_latest_checkpoint(output_dir, f"entrodiff_{exp_name}")
         if ckpt_ours_path is None:
             raise FileNotFoundError(
                 f"在 {output_dir} 下未找到 checkpoint ({exp_name}前缀)\n"
-                f"请先运行 python scripts/train_mvp.py 或通过 --ckpt_ours 指定路径"
+                f"请先运行训练脚本或通过 --ckpt_ours 指定路径"
             )
     else:
         ckpt_ours_path = Path(args.ckpt_ours)
-    print(f"[eval] 加载 Ours 模型: {ckpt_ours_path}")
+    print(f"[eval] 加载 Ours 模型 ({args.model_type}): {ckpt_ours_path}")
 
-    model_ours = StandardScore(in_channels=1).to(device)
+    # 根据 --model_type 选择模型类
+    ModelClass = MODEL_REGISTRY[args.model_type]
+    model_kwargs = {"in_channels": 1}
+    if args.model_type == "bvaware":
+        # BVAwareScore 额外参数: dim 控制容量, return_denoiser=True 兼容现有 pipeline
+        model_kwargs["dim"] = args.model_dim or 128
+        model_kwargs["return_denoiser"] = True
+    model_ours = ModelClass(**model_kwargs).to(device)
     model_ours.load_state_dict(torch.load(str(ckpt_ours_path), map_location=device))
     model_ours.eval()
 
@@ -235,8 +261,8 @@ def eval_viz():
         ckpt_baseline_path = Path(args.ckpt_baseline)
 
     if ckpt_baseline_path and ckpt_baseline_path.exists():
-        print(f"[eval] 加载 Baseline 模型: {ckpt_baseline_path}")
-        model_base = StandardScore(in_channels=1).to(device)
+        print(f"[eval] 加载 Baseline 模型 (standard): {ckpt_baseline_path}")
+        model_base = StandardScore(in_channels=1).to(device)  # baseline 始终用 StandardScore
         model_base.load_state_dict(torch.load(str(ckpt_baseline_path), map_location=device))
         model_base.eval()
 

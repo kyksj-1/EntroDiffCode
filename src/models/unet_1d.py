@@ -45,6 +45,9 @@ class UNet1D(nn.Module):
     """
     Lightweight 1D U-Net for Burgers PDE Score Estimation.
     Approximates the score function or the denoised state.
+    
+    参数:
+        dim: 基础通道数 (PC 用 64, 服务器可调大到 128/256)
     """
     def __init__(self, in_channels=1, out_channels=1, dim=64):
         super().__init__()
