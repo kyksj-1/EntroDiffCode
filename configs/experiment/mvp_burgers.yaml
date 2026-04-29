@@ -1,0 +1,19 @@
+# Experiment configuration for EntroDiff MVP — Ours (full EntroDiff)
+# 论文对照: 03_method.tex §3.1-§3.4
+experiment:
+  name: "entrodiff_mvp_run1"
+  epochs: 50              # 全量训练 epoch 数 (MVP 快速验证可用 10)
+  learning_rate: 2.0e-4   # Adam LR (EDM 推荐值)
+  
+  # Physical / Method parameters
+  nu: 1.0                # 扩散过程等效粘度 (VE-SDE 单位粘度, 非数据PDE的ν_phys=0)
+                          # σ²=2ντ, σ_max=sqrt(2×1×1)=1.41 覆盖数据 std≈1.34
+  tau_max: 1.0            # T_d, 最大扩散时间
+  
+  # Loss weights (§3.3 loss family)
+  lambda_bv: 0.1          # BV/TV 正则化权重 (Ours 核心: 0=Baseline, >0=Ours)
+  lambda_dsm: 1.0         # Denoising Score Matching 权重 (固定 1.0)
+
+  # Sampler settings (§3.4 reverse ODE)
+  heun_steps: 50          # Heun 二阶积分步数
+  zeta_pde: 0.0           # Godunov PDE guidance 强度 (0=关闭, 纯神经生成)

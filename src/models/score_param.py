@@ -58,25 +58,22 @@ class BVAwareScore(nn.Module):
         For exact computation, gradients with respect to u (x) are required.
         Note: The actual score matching expects an output of identical shape to x.
         """
-        # MVP Placeholder Logic - to be fully implemented with torch.autograd later
-        # For now, it mocks the combination of the three networks.
-        phi_sm = self.phi_sm_net(x, sigma.log()/4.0) # Using EDM time scaling proxy
+        # 1. Require grad on x to compute derivatives w.r.t input
+        x.requires_grad_(True)
+        
+        # 2. Forward pass for potentials
+        phi_sm = self.phi_sm_net(x, sigma.log()/4.0)
         phi_sh = self.phi_sh_net(x)
         kappa  = self.kappa_net(x) + 1e-4
 
         # tanh profile directly embedded into the architecture
         tanh_factor = torch.tanh(phi_sh / (2 * (sigma**2).view(-1,1,1) + 1e-6))
         
-        # In a fully rigorous form, we must compute gradients with respect to input x:
-        # 1. Require grad on x: x.requires_grad_(True)
-        # 2. Forward pass for potentials
         # 3. Compute explicit gradients setting create_graph=True for higher-order derivatives in loss:
-        #    grad_phi_sm = torch.autograd.grad(outputs=phi_sm.sum(), inputs=x, create_graph=True)[0]
-        #    grad_phi_sh = torch.autograd.grad(outputs=phi_sh.sum(), inputs=x, create_graph=True)[0]
+        grad_phi_sm = torch.autograd.grad(phi_sm.sum(), x, create_graph=True)[0]
+        grad_phi_sh = torch.autograd.grad(phi_sh.sum(), x, create_graph=True)[0]
+        
         # 4. Construct final score matching output:
-        #    s_theta = grad_phi_sm + (kappa / 2.0) * tanh_factor * grad_phi_sh
-        #
-        # Here we mock the forward step for the MVP signature:
-        s_theta = phi_sm + (kappa / 2.0) * tanh_factor * phi_sh 
+        s_theta = grad_phi_sm + (kappa / 2.0) * tanh_factor * grad_phi_sh
         
         return s_theta

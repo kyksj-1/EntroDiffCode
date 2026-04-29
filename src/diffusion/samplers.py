@@ -34,18 +34,31 @@ def entrodiff_heun_sampler(model, shape, sigma_min, sigma_max, tau_max, nu, num_
             D_u = model(u_tau, torch.tensor(sigma_t).expand(shape[0]).to(device))
             score_t = (D_u - u_tau) / (sigma_t ** 2)
 
-            # Evaluate guidance residuals
-            # NOTE (Algorithm 1 Deviation / MVP): 
-            # The paper (Alg 1) dictates \nabla_u L_PDE^Godunov(u) as the descendent direction. 
-            # Here we use the physical residual itself `pde_residual(u)` as a guidance directional proxy, 
-            # which intuitively pushes `u` towards a PDE-satisfying state along the vector field directly. 
-            # A rigorous implementation strictly following Eq. 3.8 requires computing the topological gradient:
-            #   loss_pde = pde_residual(u_tau).norm()
-            #   grad_u = torch.autograd.grad(outputs=loss_pde, inputs=u_tau)[0]
-            l_pde_t = pde_residual(u_tau, dx) # Godunov PDE guidance proxy
-            l_obs_t = 0.0 # Optional observation guidance
+            # ===== Godunov PDE Guidance (Algorithm 1 / Eq. 3.8) =====
+            # 论文要求: l_pde = ∇_u ‖pde_residual(u)‖² 作为 guidance direction
+            # 旧 proxy (已废弃): 直接用 pde_residual(u) 作方向 —— 方向正确但不精确
+            # 新实现: torch.autograd.grad 计算真梯度，严格对齐 Eq. 3.8
+            # 注意: 外层有 torch.no_grad()，需临时 enable_grad 来做 backward
+            # 当前 step 的 tau 对应的 sigma_t 已在上面计算好
+            if zeta_pde > 0:
+                # 临时启用梯度计算 (脱离外层 no_grad)
+                with torch.enable_grad():
+                    # detach + requires_grad: 创建叶子张量以便 autograd 求导
+                    u_tau_grad = u_tau.detach().requires_grad_(True)
+                    # 计算 Godunov 残差并对它做 MSE → 作为标量损失
+                    res = pde_residual(u_tau_grad, dx)
+                    loss_pde = res.pow(2).mean()
+                    # ∇_u ‖pde_residual(u)‖² → guidance direction
+                    # 注意: 不需要 create_graph (不在此处做二阶自动微分)
+                    l_pde_t = torch.autograd.grad(loss_pde, u_tau_grad)[0]
+            else:
+                # zeta_pde = 0 → 关闭 PDE guidance，跳过 costly autograd
+                l_pde_t = torch.zeros_like(u_tau)
+            # zeta_obs 当前实验设为 0 (无观测引导)
+            l_obs_t = torch.zeros_like(u_tau)
 
             # ODE drift: Eq. 3.8 / Alg 1
+            # dτ 方向上 u 的漂移速度 = -σ·σ̇·s_θ - ζ_obs·l_obs - ζ_pde·∇_u L_PDE
             d_t = -sigma_t * sigma_dot_t * score_t - zeta_obs * l_obs_t - zeta_pde * l_pde_t
 
             # Euler Step
@@ -57,7 +70,15 @@ def entrodiff_heun_sampler(model, shape, sigma_min, sigma_max, tau_max, nu, num_
                 D_u_next = model(u_next, torch.tensor(sigma_next).expand(shape[0]).to(device))
                 score_next = (D_u_next - u_next) / (sigma_next ** 2)
                 
-                l_pde_next = pde_residual(u_next, dx)
+                # 真梯度 PDE guidance for Heun correction (同 Euler 步骤逻辑)
+                if zeta_pde > 0:
+                    with torch.enable_grad():
+                        u_next_grad = u_next.detach().requires_grad_(True)
+                        res_next = pde_residual(u_next_grad, dx)
+                        loss_pde_next = res_next.pow(2).mean()
+                        l_pde_next = torch.autograd.grad(loss_pde_next, u_next_grad)[0]
+                else:
+                    l_pde_next = torch.zeros_like(u_next)
                 d_next = -sigma_next * sigma_dot_next * score_next - zeta_obs * l_obs_t - zeta_pde * l_pde_next
                 
                 # Correcting Euler with Trapz rule
