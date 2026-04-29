@@ -34,23 +34,24 @@ def entrodiff_heun_sampler(model, shape, sigma_min, sigma_max, tau_max, nu, num_
             D_u = model(u_tau, torch.tensor(sigma_t).expand(shape[0]).to(device))
             score_t = (D_u - u_tau) / (sigma_t ** 2)
 
+            # BVAwareScore 内部 enable_grad 会修改 u_tau 的 requires_grad 状态,
+            # 导致后续 PDE guidance 的 autograd 冲突. detach 确保干净计算图.
+            u_tau = u_tau.detach()
+
             # ===== Godunov PDE Guidance (Algorithm 1 / Eq. 3.8) =====
-            # 论文要求: l_pde = ∇_u ‖pde_residual(u)‖² 作为 guidance direction
-            # 旧 proxy (已废弃): 直接用 pde_residual(u) 作方向 —— 方向正确但不精确
-            # 新实现: torch.autograd.grad 计算真梯度，严格对齐 Eq. 3.8
-            # 注意: 外层有 torch.no_grad()，需临时 enable_grad 来做 backward
-            # 当前 step 的 tau 对应的 sigma_t 已在上面计算好
+            # 论文: l_pde = ∇_u ‖pde_residual(u)‖² 作为 guidance direction
             if zeta_pde > 0:
-                # 临时启用梯度计算 (脱离外层 no_grad)
                 with torch.enable_grad():
-                    # detach + requires_grad: 创建叶子张量以便 autograd 求导
-                    u_tau_grad = u_tau.detach().requires_grad_(True)
-                    # 计算 Godunov 残差并对它做 MSE → 作为标量损失
+                    u_tau_grad = u_tau.clone().requires_grad_(True)
                     res = pde_residual(u_tau_grad, dx)
                     loss_pde = res.pow(2).mean()
-                    # ∇_u ‖pde_residual(u)‖² → guidance direction
-                    # 注意: 不需要 create_graph (不在此处做二阶自动微分)
                     l_pde_t = torch.autograd.grad(loss_pde, u_tau_grad)[0]
+                    # 梯度裁剪: Godunov 残差对随机噪声可达 ~200,
+                    # 梯度可轻易超过 500, 需要归一化到合理范围
+                    grad_norm = l_pde_t.norm(p=2, dim=(1,2), keepdim=True) + 1e-6
+                    max_norm = 1.0  # 限制每步 guidance 最大方向幅度
+                    scale = torch.clamp(max_norm / grad_norm, max=1.0)
+                    l_pde_t = l_pde_t * scale
             else:
                 # zeta_pde = 0 → 关闭 PDE guidance，跳过 costly autograd
                 l_pde_t = torch.zeros_like(u_tau)
@@ -73,10 +74,14 @@ def entrodiff_heun_sampler(model, shape, sigma_min, sigma_max, tau_max, nu, num_
                 # 真梯度 PDE guidance for Heun correction (同 Euler 步骤逻辑)
                 if zeta_pde > 0:
                     with torch.enable_grad():
-                        u_next_grad = u_next.detach().requires_grad_(True)
+                        u_next_grad = u_next.clone().requires_grad_(True)
                         res_next = pde_residual(u_next_grad, dx)
                         loss_pde_next = res_next.pow(2).mean()
                         l_pde_next = torch.autograd.grad(loss_pde_next, u_next_grad)[0]
+                        # 同 Euler 步: 梯度裁剪防止 NaN
+                        grad_norm_n = l_pde_next.norm(p=2, dim=(1,2), keepdim=True) + 1e-6
+                        scale_n = torch.clamp(1.0 / grad_norm_n, max=1.0)
+                        l_pde_next = l_pde_next * scale_n
                 else:
                     l_pde_next = torch.zeros_like(u_next)
                 d_next = -sigma_next * sigma_dot_next * score_next - zeta_obs * l_obs_t - zeta_pde * l_pde_next
