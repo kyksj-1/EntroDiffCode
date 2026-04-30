@@ -1,0 +1,54 @@
+# =============================================================================
+# Foundation Model · TINY 配置 (PC RTX 4060 / Colab T4 跑得动)
+# 工程方案: Docs/black/W5_foundation_engineering_plan.md §2.4.2
+# =============================================================================
+
+experiment:
+  name: "foundation_tiny"
+  epochs: 50
+  learning_rate: 2.0e-4
+  batch_size: 16              # PC 8GB 兜底
+  grad_accum_steps: 4         # effective batch = 64
+  use_amp: false              # tiny 关 AMP, BVAware autograd.grad 与 GradScaler 兼容性差
+
+  # Schedule (复用现有 ViscosityMatchedSchedule)
+  nu: 1.0
+  tau_max: 1.0
+
+  # 检查点保存间隔 (epoch)
+  ckpt_every: 5
+
+# ----- 模型 -----
+model:
+  type: "dit_bvaware"         # "dit_plain" | "dit_bvaware"
+  in_channels: 2              # noisy_u + IC; 由 data.conditioning_type='ic' 决定
+
+  # DiT 架构参数
+  dit:
+    Nx: 128
+    dim: 128
+    n_layers: 4
+    n_heads: 4
+    patch_size: 4
+    dropout: 0.1
+  # n_pde_types 在脚本运行时根据 data.pdes 长度自动注入
+
+# ----- Loss -----
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.1
+  lambda_time: 0.0            # tiny 默认关 time loss (省显存); small/base 启用
+
+# ----- 数据 (W5-B MixedPDEDataset 配置块) -----
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0

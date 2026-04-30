@@ -1,0 +1,47 @@
+# =============================================================================
+# Foundation Model · BASE 配置 (H100 80GB / 多卡 3090 拼)
+# 工程方案: Docs/black/W5_foundation_engineering_plan.md §2.4.2
+# =============================================================================
+
+experiment:
+  name: "foundation_base"
+  epochs: 300
+  learning_rate: 1.5e-4       # 更大模型 lr 略小
+  batch_size: 128
+  grad_accum_steps: 1
+  use_amp: false
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 20
+
+model:
+  type: "dit_bvaware"
+  in_channels: 2
+
+  dit:
+    Nx: 128
+    dim: 384
+    n_layers: 8
+    n_heads: 12
+    patch_size: 4
+    dropout: 0.1
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.1
+  lambda_time: 0.5
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0

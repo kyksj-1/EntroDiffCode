@@ -1,0 +1,45 @@
+# =============================================================================
+# Foundation Model · SMOKE TEST 配置 (单 PDE Burgers, 极少 epoch)
+#
+# 用途: 验证 train_foundation.py 端到端跑通; PC 5 分钟内完成
+# 工程方案验收: W5_foundation_engineering_plan.md §5 验收标准 #5
+# =============================================================================
+
+experiment:
+  name: "foundation_smoke"
+  epochs: 2                   # 仅 2 epoch 验证管线
+  learning_rate: 2.0e-4
+  batch_size: 8
+  grad_accum_steps: 1
+  use_amp: false
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 2
+
+model:
+  type: "dit_plain"           # smoke 用 plain (避免 BVAware 二阶导慢)
+  in_channels: 2
+
+  dit:
+    Nx: 128
+    dim: 64                   # 极小
+    n_layers: 2
+    n_heads: 4
+    patch_size: 4
+    dropout: 0.0
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.05
+  lambda_time: 0.0            # smoke 关 time loss (省时)
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
