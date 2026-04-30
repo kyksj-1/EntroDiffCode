@@ -62,7 +62,7 @@ def train_mvp():
     # 数据路径: 由 env_manager 将 data_dir 解析为绝对路径，保证跨环境一致性
     # 预期数据文件: burg1d_N5000_Nx128.npy, shape [N_samples, N_time, N_x]
     #              每行是一条完整时空轨迹 (Godunov 求解器生成)
-    data_path = env.data_dir / "burgers_1d_N5000_Nx128.npy"
+    data_path = env.data_dir / exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
     
     # timestamp 用于本次运行的输出文件后缀
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

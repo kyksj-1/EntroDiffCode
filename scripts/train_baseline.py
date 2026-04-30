@@ -31,11 +31,12 @@ def train_baseline():
     device = torch.device(env.default_device)
     batch_size = env._config["hardware"].get("max_batch_size", 64)
     num_workers = env.num_workers
-    data_path = env.data_dir / "burgers_1d_N5000_Nx128.npy"
     
     config_path = PROJECT_ROOT / args.config
     with open(config_path, "r", encoding="utf-8") as f:
         exp_cfg = yaml.safe_load(f)["experiment"]
+
+    data_path = env.data_dir / exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
 
     # 实验命名: 专门使用 baseline 目录
     exp_name = "mvp_baseline"

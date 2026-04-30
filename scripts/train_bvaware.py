@@ -45,12 +45,13 @@ def train_bvaware():
     device = torch.device(env.default_device)
     batch_size = env._config["hardware"].get("max_batch_size", 64)
     num_workers = env.num_workers
-    data_path = env.data_dir / "burgers_1d_N5000_Nx128.npy"
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     config_path = PROJECT_ROOT / args.config
     with open(config_path, "r", encoding="utf-8") as f:
         exp_cfg = yaml.safe_load(f)["experiment"]
+
+    data_path = env.data_dir / exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
 
     exp_name = exp_cfg.get("name", "bvaware_run")
     output_dir = env.output_dir / exp_name

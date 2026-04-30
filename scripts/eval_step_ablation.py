@@ -108,7 +108,7 @@ def run_ablation():
     zeta_pde = 0.0    # 关闭 PDE guidance (纯神经生成, 控制变量)
 
     # ========== 2. 加载 test 数据 ==========
-    data_path = env.data_dir / "burgers_1d_N5000_Nx128.npy"
+    data_path = env.data_dir / exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
     if not data_path.exists():
         raise FileNotFoundError(
             f"数据文件不存在: {data_path}\n"
