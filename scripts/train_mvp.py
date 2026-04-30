@@ -62,7 +62,7 @@ def train_mvp():
     # 数据路径: 由 env_manager 将 data_dir 解析为绝对路径，保证跨环境一致性
     # 预期数据文件: burg1d_N5000_Nx128.npy, shape [N_samples, N_time, N_x]
     #              每行是一条完整时空轨迹 (Godunov 求解器生成)
-    data_path = env.data_dir / exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
+    data_path = env.data_dir / "burgers_1d_N5000_Nx128.npy"  # default, E2 overrides below
     
     # timestamp 用于本次运行的输出文件后缀
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -90,6 +90,7 @@ def train_mvp():
     lambda_bv = float(exp_cfg.get("lambda_bv", 0.1))
     # λ_time: 时间一致性损失权重 (0 = 关闭, >0 = 启用短期物理一致性)
     lambda_time = float(exp_cfg.get("lambda_time", 0.0))
+    if exp_cfg.get("data_file", "").startswith("bl_"): data_path = env.data_dir / exp_cfg["data_file"]
     # λ_dsm: DSM 损失的权重 (通常固定为 1.0，λ_bv 相对此为惩罚力度)
     lambda_dsm = float(exp_cfg.get("lambda_dsm", 1.0))
 

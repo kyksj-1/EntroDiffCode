@@ -1,0 +1,12 @@
+experiment:
+  data_file: burgers_sharp_N5000_Nx128.npy
+  epochs: 500
+  heun_steps: 50
+  lambda_bv: 0.0
+  lambda_dsm: 1.0
+  lambda_time: 0.0
+  learning_rate: 0.0002
+  name: baseline_full
+  nu: 1.0
+  tau_max: 1.0
+  zeta_pde: 0.0
