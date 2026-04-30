@@ -1,0 +1,33 @@
+# =============================================================================
+# config/e4_shallow_water.yaml · 实验 E4 — 2D 浅水方程 圆形溃坝
+# =============================================================================
+experiment:
+  name: "E4_shallow_water"
+  seed: 0
+
+data:
+  pde: "shallow_water"
+  N_x: 64
+  N_y: 64
+  T: 0.5
+  n_samples: 1024
+  g: 9.81
+
+model:
+  type: "bvaware"
+  in_channels: 1            # 只预测水深 h
+  hidden_dim: 96            # 2D 适度加宽
+  dims: 2                   # 二维卷积
+
+schedule:
+  type: "viscosity_matched"
+  nu_phys: 0.0
+  T_d: 1.0
+
+loss:
+  lambda_ent: 0.1
+  lambda_bv: 0.05
+  lambda_burg: 0.01
+
+train:
+  total_steps: 300000
