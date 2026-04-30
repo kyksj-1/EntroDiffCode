@@ -164,6 +164,8 @@ def eval_viz():
     # 取前 n_samples 条的终端时刻解 (即最后一个时间步) 作为 ground truth ρ_T
     # gt_samples shape: (n_samples, Nx) -- 每行是一条 Godunov 真值解 u(x, T)
     gt_samples = test_dataset.data[:n_samples, -1, :]
+    # IC 条件: 取首帧作为初始条件, 传给 sampler
+    ic_samples = test_dataset.data[:n_samples, 0, :]  # [n_samples, Nx]
     nx_dim = gt_samples.shape[1]
     x_grid = np.linspace(0, 2 * np.pi, nx_dim, endpoint=False)  # 空间坐标 (周期域)
 
@@ -183,7 +185,7 @@ def eval_viz():
 
     # 根据 --model_type 选择模型类
     ModelClass = MODEL_REGISTRY[args.model_type]
-    model_kwargs = {"in_channels": 1}
+    model_kwargs = {"in_channels": 2}  # IC-conditioned: 2-ch input (noisy_u + IC)
     if args.model_type == "bvaware":
         # BVAwareScore 额外参数: dim 控制容量, return_denoiser=True 兼容现有 pipeline
         model_kwargs["dim"] = args.model_dim or 128
@@ -204,7 +206,8 @@ def eval_viz():
         nu=nu,
         num_steps=heun_steps,
         device=device,
-        zeta_pde=zeta_pde
+        zeta_pde=zeta_pde,
+        ic=torch.tensor(ic_samples, device=device).unsqueeze(1)  # IC 条件 [n, 1, Nx]
     ).squeeze().cpu().numpy()  # → (n_samples, Nx)
 
     # ========== 5. 指标计算 ==========
@@ -262,7 +265,7 @@ def eval_viz():
 
     if ckpt_baseline_path and ckpt_baseline_path.exists():
         print(f"[eval] 加载 Baseline 模型 (standard): {ckpt_baseline_path}")
-        model_base = StandardScore(in_channels=1).to(device)  # baseline 始终用 StandardScore
+        model_base = StandardScore(in_channels=2).to(device)  # IC-conditioned baseline
         model_base.load_state_dict(torch.load(str(ckpt_baseline_path), map_location=device))
         model_base.eval()
 

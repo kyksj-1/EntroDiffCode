@@ -57,7 +57,7 @@ def train_baseline():
 
     print(f"Initializing EDM Baseline Model... (lr={lr})")
     # Backbone 使用同样的 1D U-Net，但损失和 schedule 为普通 EDM
-    model = StandardScore(in_channels=1).to(device)
+    model = StandardScore(in_channels=2).to(device)  # IC-conditioned
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # 使用 BaselineSchedule: EDM 标准 log-normal sigma 采样 (无视物理ν, τ)
@@ -89,14 +89,15 @@ def train_baseline():
         total_loss = 0.0
         
         for batch in train_loader:
-            x = batch[:, -1, :].unsqueeze(1).to(device)  # [B, 1, Nx]
+            ic = batch[:, 0, :].unsqueeze(1).to(device)          # [B, 1, Nx]
+            x_target = batch[:, -1, :].unsqueeze(1).to(device)    # [B, 1, Nx]
             optimizer.zero_grad()
             
             # 使用 BaselineSchedule 获取标准 EDM sigmas
-            sigmas = schedule.sample_sigma(x.shape[0], device)
+            sigmas = schedule.sample_sigma(x_target.shape[0], device)
             
-            # 仅使用 L_DSM (删去了 lambda_bv * L_BV)
-            loss_dsm = get_dsm_loss(model, x, sigmas)
+            # 仅使用 L_DSM (删去了 lambda_bv * L_BV), 含 IC 条件
+            loss_dsm = get_dsm_loss(model, x_target, sigmas, ic=ic)
             loss = lambda_dsm * loss_dsm
             
             loss.backward()

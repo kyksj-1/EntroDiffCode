@@ -9,13 +9,14 @@ class StandardScore(nn.Module):
     """
     def __init__(self, in_channels=1, sigma_data=0.5):
         super().__init__()
-        self.net = UNet1D(in_channels=in_channels, out_channels=in_channels)
+        self.net = UNet1D(in_channels=in_channels, out_channels=1)  # 始终输出 1-ch (IC 仅作条件输入)
         self.sigma_data = sigma_data
 
     def forward(self, x, sigma):
         """
         EDM preconditions.
         c_skip * x + c_out * F_theta(c_in * x, c_noise(sigma))
+        x 含 in_channels 通道 (noisy_u + IC), 仅第 0 通道参与 skip connection
         """
         c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
         c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2)**0.5
@@ -24,7 +25,8 @@ class StandardScore(nn.Module):
 
         F_x = self.net(c_in[:, None, None] * x, c_noise)
         
-        D_x = c_skip[:, None, None] * x + c_out[:, None, None] * F_x
+        # c_skip * x_0: 仅对 noisy 通道做 skip (IC 通道不参与) 
+        D_x = c_skip[:, None, None] * x[:, :1, :] + c_out[:, None, None] * F_x
         return D_x
 
 class BVAwareScore(nn.Module):
@@ -44,24 +46,24 @@ class BVAwareScore(nn.Module):
         self.return_denoiser = return_denoiser
         
         # 1. Smooth background potential phi_sm (UNet backbone, 论文 §3.2 role 1)
-        #    dim 控制模型容量: PC=64, 服务器=128/256 以提升 expressivity
-        self.phi_sm_net = UNet1D(in_channels=in_channels, out_channels=in_channels, dim=dim)
+        #    out_channels=1: 始终输出 1-ch 势能 (IC 仅作条件输入)
+        self.phi_sm_net = UNet1D(in_channels=in_channels, out_channels=1, dim=dim)
         
         # 2. Shock signed distance phi_sh (论文 §3.2 role 2)
-        #    轻量 Conv1d 网络, 编码 shock 几何位置
+        #    输入 2-ch (noisy_u+IC), 输出 1-ch signed distance
         self.phi_sh_net = nn.Sequential(
             nn.Conv1d(in_channels, 32, kernel_size=3, padding=1),
             nn.SiLU(),
-            nn.Conv1d(32, in_channels, kernel_size=3, padding=1)
+            nn.Conv1d(32, 1, kernel_size=3, padding=1)  # → 1-ch signed distance
         )
         
         # 3. Jump amplitude kappa (论文 §3.2 role 3)
-        #    κ ≥ κ₀ > 0 通过 Softplus 强制为正, Rankine-Hugoniot 条件提供物理值
+        #    输入 2-ch, 输出 1-ch 跳跃强度
         self.kappa_net = nn.Sequential(
             nn.Conv1d(in_channels, 16, kernel_size=1),
             nn.SiLU(),
-            nn.Conv1d(16, in_channels, kernel_size=1),
-            nn.Softplus()  # 强制 κ > 0
+            nn.Conv1d(16, 1, kernel_size=1),  # → 1-ch jump amplitude
+            nn.Softplus()
         )
         
     def forward(self, x, sigma):

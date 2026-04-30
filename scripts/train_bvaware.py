@@ -79,7 +79,7 @@ def train_bvaware():
     #   dim 控制模型容量: PC=64 (~0.4M), 服务器=128 (~1.6M), 256 (~6M)
     #   return_denoiser=True → 输出 D_x, 兼容 get_dsm_loss / get_bv_loss / Heun sampler
     print(f"初始化 BVAwareScore (dim={args.dim}, nu={nu}, lambda_bv={lambda_bv}...)")
-    model = BVAwareScore(in_channels=1, dim=args.dim, return_denoiser=True).to(device)
+    model = BVAwareScore(in_channels=2, dim=args.dim, return_denoiser=True).to(device)  # in_channels=2: noisy + IC
     optimizer = optim.Adam(model.parameters(), lr=lr)
     schedule = ViscosityMatchedSchedule(nu=nu, tau_max=tau_max)
 
@@ -114,18 +114,19 @@ def train_bvaware():
         total_loss, total_dsm, total_bv = 0.0, 0.0, 0.0
 
         for batch in train_loader:
-            # clean target 解 u(T, x), shape [B, 1, Nx]
-            x = batch[:, -1, :].unsqueeze(1).to(device)
+            # IC 条件 + target 解
+            ic = batch[:, 0, :].unsqueeze(1).to(device)          # [B, 1, Nx]
+            x_target = batch[:, -1, :].unsqueeze(1).to(device)    # [B, 1, Nx]
             optimizer.zero_grad()
 
             # 采样连续时间 σ ~ viscosity-matched schedule
-            sigmas = schedule.sample_sigma(x.shape[0], device)
+            sigmas = schedule.sample_sigma(x_target.shape[0], device)
 
-            # L_DSM: BVAwareScore 返回 D_x, 与 StandardScore 接口一致
-            loss_dsm = get_dsm_loss(model, x, sigmas)
+            # L_DSM: BVAwareScore 返回 D_x, 与 StandardScore 接口一致 (含 IC 条件)
+            loss_dsm = get_dsm_loss(model, x_target, sigmas, ic=ic)
 
             # L_BV: TV 对 BVAwareScore 输出的约束 (tanh 层保证 shock 陡度)
-            loss_bv = get_bv_loss(model, x, sigmas)
+            loss_bv = get_bv_loss(model, x_target, sigmas, ic=ic)
 
             loss = lambda_dsm * loss_dsm + lambda_bv * loss_bv
             loss.backward()

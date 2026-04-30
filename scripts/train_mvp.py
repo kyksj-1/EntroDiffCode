@@ -122,7 +122,7 @@ def train_mvp():
     #   - 前向过程: D_x = c_skip·x + c_out·F_θ(c_in·x, c_noise(σ))
     #   - 含义: 给定带噪输入 x_noisy，直接预测洁净态 x_0 (而非噪声 ε)
     #   - 论文对应: 03_method.tex §3.2 EDM 参数化
-    model = StandardScore(in_channels=1).to(device)
+    model = StandardScore(in_channels=2).to(device)  # in_channels=2: noisy_u + IC 条件
     # Adam 优化器: lr 从 YAML 读取，默认 2e-4 (EDM 推荐值)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     # ViscosityMatchedSchedule: 物理驱动的扩散时间 → 噪声强度映射
@@ -181,13 +181,13 @@ def train_mvp():
         total_time = 0.0   # 本 epoch L_time 分量累加
         
         for batch in train_loader:
-            # batch shape: [B, N_time, N_x] → 整条时空轨迹
-            # x_target: 终端时刻解 u(T, x), 作为扩散模型的目标分布
+            # batch shape: [B, N_time, N_x]
+            # ic = 初始条件 (t=0), 作为模型的条件输入
+            ic = batch[:, 0, :].unsqueeze(1).to(device)      # [B, 1, Nx]
             x_target = batch[:, -1, :].unsqueeze(1).to(device)  # [B, 1, Nx]
 
             optimizer.zero_grad()
             
-            # 采样连续扩散时间 τ ~ U[0, τ_max]
             sigmas = schedule.sample_sigma(x_target.shape[0], device)
             
             # ---- L_DSM: Denoising Score Matching (论文 §3.2) ----
@@ -197,22 +197,20 @@ def train_mvp():
             #   2. 构造带噪样本 x_noisy = x + σ·ε
             #   3. 模型预测洁净态: D_x = model(x_noisy, σ)
             #   4. 计算 MSE: ‖D_x - x‖² → 等价于 score matching (对 EDM 参数化)
-            loss_dsm = get_dsm_loss(model, x_target, sigmas)
+            loss_dsm = get_dsm_loss(model, x_target, sigmas, ic=ic)
             
             # ---- L_BV: Total-Variation 代理损失 (论文 §3.3) ----
-            loss_bv = get_bv_loss(model, x_target, sigmas)
+            loss_bv = get_bv_loss(model, x_target, sigmas, ic=ic)
 
-            # 联合损失: L = λ_dsm·L_DSM + λ_bv·L_BV (+ λ_time·L_time)
+            # 联合损失
             loss = lambda_dsm * loss_dsm + lambda_bv * loss_bv
 
-            # ---- L_time: Godunov 时间一致性 (论文 Theorem 1 的时间连续性) ----
-            # 利用数据集的时间轨迹: 加噪去噪 x_prev → Godunov 推进 → 对比 x_target
-            # 强制去噪输出满足 Burgers 方程的短期物理演化
+            # ---- L_time: Godunov 时间一致性 ----
             loss_time = torch.tensor(0.0, device=device)
             if lambda_time > 0:
                 x_prev = batch[:, -2, :].unsqueeze(1).to(device)  # [B, 1, Nx]
                 loss_time = get_godunov_time_loss(
-                    model, x_prev, x_target, sigmas, dt=dt_phys, dx=dx_phys
+                    model, x_prev, x_target, sigmas, dt=dt_phys, dx=dx_phys, ic=ic
                 )
                 loss = loss + lambda_time * loss_time
             
