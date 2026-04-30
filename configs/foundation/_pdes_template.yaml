@@ -1,0 +1,38 @@
+# ============================================================================
+# Foundation Model 配置: PDE 列表模板 (W5-B)
+#
+# 工程方案: Docs/black/W5_foundation_engineering_plan.md §0.2 + §2.2
+#
+# 用法: 复制 'data:' 块到 configs/foundation/{tiny,small,base}.yaml
+#
+# 扩展性 (W5 plan §0.2 可配置性铁律):
+#   新增 PDE 仅需追加一项 {name, data_file, flux_type, weight}, 代码不变.
+#   flux_type 字符串将由 train_foundation.py 的 loss 派遣机制路由到对应通量.
+# ============================================================================
+data:
+  conditioning_type: "ic"          # 'ic' → 首帧作 IC; 'none' → 不传条件
+  mix_strategy: "uniform"          # 'uniform' | 'weighted_by_size'
+
+  pdes:
+    # ---- E1: 1D Inviscid Burgers ----
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+
+    # ---- E2: 1D Buckley-Leverett (非凸通量) ----
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0
+
+    # ---- 未来扩展示例 (取消注释 + 准备数据即可启用) ----
+    # - name: "euler_sod"
+    #   data_file: "euler_sod_1d_N5000_Nx128.npy"
+    #   flux_type: "euler"
+    #   weight: 0.5
+    #
+    # - name: "shallow_water"
+    #   data_file: "sw_1d_N5000_Nx128.npy"
+    #   flux_type: "shallow_water"
+    #   weight: 0.5
