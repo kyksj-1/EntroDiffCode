@@ -7,7 +7,7 @@ experiment:
   
   # Physical / Method parameters
   nu: 1.0                # 扩散过程等效粘度 (VE-SDE 单位粘度, 非数据PDE的ν_phys=0)
-                          # σ²=2ντ, σ_max=sqrt(2×1×1)=1.41 覆盖数据 std≈1.34
+                           # σ²=2ντ, σ_max=sqrt(2×1×1)=1.41 覆盖数据 std≈1.34
   tau_max: 1.0            # T_d, 最大扩散时间
   
   # Loss weights (§3.3 loss family)
@@ -17,3 +17,11 @@ experiment:
   # Sampler settings (§3.4 reverse ODE)
   heun_steps: 50          # Heun 二阶积分步数
   zeta_pde: 0.0           # Godunov PDE guidance 强度 (0=关闭, 纯神经生成)
+
+  # IC-conditioning 模块化配置 (训练/评估/mvp 统一)
+  # type="ic": 将 batch 首帧 (t=0) 作为额外条件通道拼接到模型输入
+  # type="none": 无条件生成 (纯扩散, in_channels=1)
+  # in_channels_extra: 条件通道数 (ic=1, pde_embedding 按需扩展)
+  conditioning:
+    type: "ic"
+    in_channels_extra: 1

@@ -1,0 +1,27 @@
+# =============================================================================
+# E2 Buckley–Leverett · Baseline (纯 EDM StandardScore) 训练配置
+# 论文对应: 05_experiments.tex §E2 消融实验 — 对比无 BV 先验的纯扩散
+# 与 e2_bvaware.yaml 唯一区别:
+#   - model_type: standard → StandardScore (无 tanh 建筑先验, 无 BV loss)
+#   - lambda_bv: 0 → 纯 L_DSM 训练
+# 其他超参严格对齐 e2_bvaware.yaml, 保证对比公平
+# =============================================================================
+experiment:
+  name: "e2_baseline_run"
+  epochs: 200                        # 与 e2_bvaware 对齐
+  learning_rate: 2.0e-4
+
+  nu: 1.0
+  tau_max: 1.0
+
+  lambda_bv: 0.0                     # 关闭 BV loss → 纯 L_DSM
+  lambda_dsm: 1.0
+
+  heun_steps: 50
+  zeta_pde: 0.0
+
+  data_file: "bl_1d_N5000_Nx128.npy"
+  model_type: "standard"             # StandardScore (无建筑先验)
+  use_ic: true
+  in_channels: 2
+  dim: 64                            # StandardScore 默认 dim (与 BVAwareScore 的 128 不对称, 但这是 baseline 惯例)

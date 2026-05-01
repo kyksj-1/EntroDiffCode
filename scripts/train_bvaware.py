@@ -64,13 +64,19 @@ def train_bvaware():
     lambda_bv = float(exp_cfg.get("lambda_bv", 0.1))
     lambda_dsm = float(exp_cfg.get("lambda_dsm", 1.0))
 
+    # ---- Conditioning 条件配置 (模块化 IC-conditioning) ----
+    conditioning_cfg = exp_cfg.get("conditioning", {"type": "none", "in_channels_extra": 0})
+    cond_type = conditioning_cfg.get("type", "none")
+    in_channels = 1 + int(conditioning_cfg.get("in_channels_extra", 0))
+    print(f"  Conditioning: type={cond_type}  in_channels={in_channels}")
+
     if not data_path.exists():
         print(f"数据不存在: {data_path}, 请先运行 generate_data.py")
         return
 
     # ========== 2. 数据加载 ==========
     print(f"加载数据: {data_path}")
-    train_dataset = BurgersDataset(data_path, mode='train')
+    train_dataset = BurgersDataset(data_path, mode='train', conditioning_type=cond_type)
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
                               shuffle=True, num_workers=num_workers)
 
@@ -78,8 +84,9 @@ def train_bvaware():
     # BVAwareScore: 论文 §3.2 Eq. 3.2 的完整实现
     #   dim 控制模型容量: PC=64 (~0.4M), 服务器=128 (~1.6M), 256 (~6M)
     #   return_denoiser=True → 输出 D_x, 兼容 get_dsm_loss / get_bv_loss / Heun sampler
+    #   in_channels: 1 (noisy_u) + conditioning_cfg.in_channels_extra (如 IC=1 → 2)
     print(f"初始化 BVAwareScore (dim={args.dim}, nu={nu}, lambda_bv={lambda_bv}...)")
-    model = BVAwareScore(in_channels=2, dim=args.dim, return_denoiser=True).to(device)  # in_channels=2: noisy + IC
+    model = BVAwareScore(in_channels=in_channels, dim=args.dim, return_denoiser=True).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     schedule = ViscosityMatchedSchedule(nu=nu, tau_max=tau_max)
 
@@ -102,6 +109,7 @@ def train_bvaware():
         log_fp.write(f"# EntroDiff BV-aware Training Log\n")
         log_fp.write(f"# Model: BVAwareScore dim={args.dim}\n")
         log_fp.write(f"# Params: epochs={epochs} lr={lr} nu={nu} lambda_dsm={lambda_dsm} lambda_bv={lambda_bv}\n")
+        log_fp.write(f"# Conditioning: type={cond_type} in_channels={in_channels}\n")
         log_fp.write(f"# Device: {device}  Batch: {batch_size}\n")
         log_fp.write(f"# epoch  loss_total  loss_dsm  loss_bv\n")
     log_fp.flush()
@@ -114,19 +122,21 @@ def train_bvaware():
         total_loss, total_dsm, total_bv = 0.0, 0.0, 0.0
 
         for batch in train_loader:
-            # IC 条件 + target 解
-            ic = batch[:, 0, :].unsqueeze(1).to(device)          # [B, 1, Nx]
+            # 通过数据集模块化接口提取条件张量 (IC / none)
+            cond = train_dataset.get_conditioning(batch)  # [B, 1, Nx] or None
+            if cond is not None:
+                cond = cond.to(device)
             x_target = batch[:, -1, :].unsqueeze(1).to(device)    # [B, 1, Nx]
             optimizer.zero_grad()
 
             # 采样连续时间 σ ~ viscosity-matched schedule
             sigmas = schedule.sample_sigma(x_target.shape[0], device)
 
-            # L_DSM: BVAwareScore 返回 D_x, 与 StandardScore 接口一致 (含 IC 条件)
-            loss_dsm = get_dsm_loss(model, x_target, sigmas, ic=ic)
+            # L_DSM: BVAwareScore 返回 D_x, 与 StandardScore 接口一致
+            loss_dsm = get_dsm_loss(model, x_target, sigmas, conditioning=cond)
 
             # L_BV: TV 对 BVAwareScore 输出的约束 (tanh 层保证 shock 陡度)
-            loss_bv = get_bv_loss(model, x_target, sigmas, ic=ic)
+            loss_bv = get_bv_loss(model, x_target, sigmas, conditioning=cond)
 
             loss = lambda_dsm * loss_dsm + lambda_bv * loss_bv
             loss.backward()

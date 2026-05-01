@@ -1,0 +1,28 @@
+# =============================================================================
+# E2 Buckley–Leverett · BVAwareScore 训练配置
+# 论文对应: 05_experiments.tex §E2 · Buckley–Leverett (非凸通量)
+# 与 E1 Burgers 的关键区别:
+#   - Buckley–Leverett 非凸通量产生 shock + rarefaction 复合波
+#   - nu=1.0 (VE-SDE 单位粘度), 数据分布更复杂
+#   - lambda_bv=0.1 (BV 正则化), 帮助 tanh 层捕捉复合波结构
+#   - in_channels=2 (noisy_u + IC) → IC-conditioned 训练
+# =============================================================================
+experiment:
+  name: "e2_bvaware_run"
+  epochs: 200                        # 匹配 E1 bvaware 的 epoch 数 (服务器可增至 500)
+  learning_rate: 2.0e-4              # Adam LR (EDM 推荐值)
+
+  nu: 1.0                            # VE-SDE 单位粘度 (σ²=2ντ)
+  tau_max: 1.0                       # 最大扩散时间
+
+  lambda_bv: 0.1                     # BV/TV 正则化 (EntroDiff 核心)
+  lambda_dsm: 1.0                    # Denoising Score Matching 权重
+
+  heun_steps: 50                     # Heun 二阶积分步数
+  zeta_pde: 0.0                      # PDE guidance 关闭 (无条件采样)
+
+  data_file: "bl_1d_N5000_Nx128.npy" # Buckley–Leverett Godunov 真值数据
+  model_type: "bvaware"              # BVAwareScore (§3.2 Eq. 3.2)
+  use_ic: true                       # IC-conditioned (in_channels=2: noisy+IC)
+  in_channels: 2                     # [noisy_u(t), IC(x)] 拼接输入
+  dim: 128                           # UNet 基础通道数 (PC=64, 服务器=128~256)

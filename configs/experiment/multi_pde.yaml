@@ -1,0 +1,49 @@
+# =============================================================================
+# Multi-PDE 基础模型训练配置 (Foundation Model 预备)
+# 论文对应: 06_conclusion.tex §Future Work · 多 PDE 统一框架
+# 
+# 设计思路:
+#   在 E1 (Burgers) + E2 (Buckley–Leverett) 基础上,
+#   Multi-PDE 模型同时学习多种 PDE 的解分布.
+#   PDE type embedding 是一个可学习的 token, 拼接到输入通道中,
+#   使网络区分不同 PDE 类型的物理特性.
+#
+# 架构变更 (vs. 单 PDE):
+#   - in_channels: 2 (noisy_u + IC) → 3 (noisy_u + IC + PDE_type_embedding)
+#   - 新增: self.pde_embed = nn.Embedding(num_pde_types, Nx)
+#   - 训练时均匀混合两种 PDE 的 batch
+# =============================================================================
+experiment:
+  name: "multi_pde_run"
+  epochs: 300                        # 多 PDE 需要更多 epoch 收敛
+  learning_rate: 2.0e-4
+
+  nu: 1.0                            # 统一 VE-SDE 粘度
+  tau_max: 1.0
+
+  lambda_bv: 0.1                     # BV 正则化 (BVAwareScore)
+  lambda_dsm: 1.0
+
+  heun_steps: 50
+  zeta_pde: 0.0
+
+  # ---- 多 PDE 特有配置 ----
+  pde_types:                         # 当前支持的 PDE 类型列表
+    - "burgers"
+    - "buckley_leverett"
+  # 未来扩展:
+  #   - "euler_sod"           (E3: 三组分系统)
+  #   - "vlasov_poisson"      (E5: 等离子体, 加分项)
+  #   - "navier_stokes_2d"    (远期: 2D 湍流)
+
+  data_files:                        # 每种 PDE 对应的数据文件
+    burgers: "burgers_1d_N5000_Nx128.npy"
+    buckley_leverett: "bl_1d_N5000_Nx128.npy"
+
+  mix_strategy: "uniform"            # 训练时 batch 混合策略: uniform=每种 PDE 等概率采样
+  num_pde_types: 2                   # len(pde_types), 自动推导
+  in_channels: 3                     # 2 (noisy+IC) + 1 (PDE type embedding channel)
+  pde_embed_dim: 1                   # PDE type embedding 通道数 (当前 1, 可扩展为 multi-channel)
+
+  model_type: "bvaware"              # 基础模型使用 BVAwareScore
+  dim: 128                           # 多 PDE 需要更大容量

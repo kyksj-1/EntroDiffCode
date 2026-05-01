@@ -47,17 +47,22 @@ def train_baseline():
     lr = float(exp_cfg.get("learning_rate", 2e-4))
     lambda_dsm = float(exp_cfg.get("lambda_dsm", 1.0))
 
+    # ---- Conditioning 条件配置 (模块化 IC-conditioning) ----
+    conditioning_cfg = exp_cfg.get("conditioning", {"type": "none", "in_channels_extra": 0})
+    cond_type = conditioning_cfg.get("type", "none")
+    in_channels = 1 + int(conditioning_cfg.get("in_channels_extra", 0))
+
     if not data_path.exists():
         print(f"Data not found at {data_path} for baseline. Run generate_data.py first.")
         return
 
     print("Loading Dataset for Baseline...")
-    train_dataset = BurgersDataset(data_path, mode='train')
+    train_dataset = BurgersDataset(data_path, mode='train', conditioning_type=cond_type)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-    print(f"Initializing EDM Baseline Model... (lr={lr})")
+    print(f"Initializing EDM Baseline Model... (lr={lr}, in_channels={in_channels})")
     # Backbone 使用同样的 1D U-Net，但损失和 schedule 为普通 EDM
-    model = StandardScore(in_channels=2).to(device)  # IC-conditioned
+    model = StandardScore(in_channels=in_channels).to(device)  # 从 config 读取条件通道数
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # 使用 BaselineSchedule: EDM 标准 log-normal sigma 采样 (无视物理ν, τ)
@@ -76,6 +81,7 @@ def train_baseline():
     log_fp.write(f"# Config: {config_path}\n")
     log_fp.write(f"# Device: {device}  Batch: {batch_size}  Workers: {num_workers}\n")
     log_fp.write(f"# Params: epochs={epochs} lr={lr} lambda_dsm={lambda_dsm}\n")
+    log_fp.write(f"# Conditioning: type={cond_type} in_channels={in_channels}\n")
     log_fp.write(f"# Schedule: BaselineSchedule (log-normal sigma, P_mean=-1.2, P_std=1.2)\n")
     log_fp.write(f"# Data: {data_path}\n")
     log_fp.write(f"# Output: {output_dir}\n")
@@ -89,15 +95,18 @@ def train_baseline():
         total_loss = 0.0
         
         for batch in train_loader:
-            ic = batch[:, 0, :].unsqueeze(1).to(device)          # [B, 1, Nx]
+            # 通过数据集模块化接口提取条件张量 (IC / none)
+            cond = train_dataset.get_conditioning(batch)  # [B, 1, Nx] or None
+            if cond is not None:
+                cond = cond.to(device)
             x_target = batch[:, -1, :].unsqueeze(1).to(device)    # [B, 1, Nx]
             optimizer.zero_grad()
             
             # 使用 BaselineSchedule 获取标准 EDM sigmas
             sigmas = schedule.sample_sigma(x_target.shape[0], device)
             
-            # 仅使用 L_DSM (删去了 lambda_bv * L_BV), 含 IC 条件
-            loss_dsm = get_dsm_loss(model, x_target, sigmas, ic=ic)
+            # 仅使用 L_DSM (删去了 lambda_bv * L_BV), 含条件通道
+            loss_dsm = get_dsm_loss(model, x_target, sigmas, conditioning=cond)
             loss = lambda_dsm * loss_dsm
             
             loss.backward()

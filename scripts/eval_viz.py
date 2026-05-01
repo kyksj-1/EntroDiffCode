@@ -149,6 +149,12 @@ def eval_viz():
     zeta_pde = args.zeta_pde if args.zeta_pde is not None else float(exp_cfg.get("zeta_pde", 0.0))
     n_samples = args.n_samples
 
+    # ---- Conditioning 条件配置 (模块化 IC-conditioning) ----
+    conditioning_cfg = exp_cfg.get("conditioning", {"type": "none", "in_channels_extra": 0})
+    cond_type = conditioning_cfg.get("type", "none")
+    in_channels = 1 + int(conditioning_cfg.get("in_channels_extra", 0))
+    print(f"[eval] Conditioning: type={cond_type}  in_channels={in_channels}")
+
     # ========== 2. 加载 test data (Godunov 真值) ==========
     print("[eval] 加载 test split 数据...")
     # 支持不同数据集: 默认 Burgers, 可扩展 sharp IC 等变体
@@ -159,13 +165,14 @@ def eval_viz():
             f"数据文件不存在: {data_path}\n"
             f"请先运行 python scripts/generate_data.py 生成数据"
         )
-    test_dataset = BurgersDataset(data_path, mode='test')
+    test_dataset = BurgersDataset(data_path, mode='test', conditioning_type=cond_type)
 
     # 取前 n_samples 条的终端时刻解 (即最后一个时间步) 作为 ground truth ρ_T
     # gt_samples shape: (n_samples, Nx) -- 每行是一条 Godunov 真值解 u(x, T)
     gt_samples = test_dataset.data[:n_samples, -1, :]
-    # IC 条件: 取首帧作为初始条件, 传给 sampler
-    ic_samples = test_dataset.data[:n_samples, 0, :]  # [n_samples, Nx]
+    # IC 条件: 通过模块化接口提取 (type=ic 时为首帧; type=none 时为 None)
+    ic_samples = test_dataset.data[:n_samples, 0, :]  # [n_samples, Nx] (原始数据, 用于底层提取)
+    ic_numpy = ic_samples if cond_type == "ic" else None
     nx_dim = gt_samples.shape[1]
     x_grid = np.linspace(0, 2 * np.pi, nx_dim, endpoint=False)  # 空间坐标 (周期域)
 
@@ -185,7 +192,7 @@ def eval_viz():
 
     # 根据 --model_type 选择模型类
     ModelClass = MODEL_REGISTRY[args.model_type]
-    model_kwargs = {"in_channels": 2}  # IC-conditioned: 2-ch input (noisy_u + IC)
+    model_kwargs = {"in_channels": in_channels}  # 从 config 读取 (1=无条件, 2=IC-conditioned)
     if args.model_type == "bvaware":
         # BVAwareScore 额外参数: dim 控制容量, return_denoiser=True 兼容现有 pipeline
         model_kwargs["dim"] = args.model_dim or 128
@@ -207,7 +214,7 @@ def eval_viz():
         num_steps=heun_steps,
         device=device,
         zeta_pde=zeta_pde,
-        ic=torch.tensor(ic_samples, device=device).unsqueeze(1)  # IC 条件 [n, 1, Nx]
+        ic=torch.tensor(ic_numpy, device=device).unsqueeze(1) if ic_numpy is not None else None  # IC 条件 [n, 1, Nx]
     ).squeeze().cpu().numpy()  # → (n_samples, Nx)
 
     # ========== 5. 指标计算 ==========
@@ -265,11 +272,12 @@ def eval_viz():
 
     if ckpt_baseline_path and ckpt_baseline_path.exists():
         print(f"[eval] 加载 Baseline 模型 (standard): {ckpt_baseline_path}")
-        model_base = StandardScore(in_channels=2).to(device)  # IC-conditioned baseline
+        model_base = StandardScore(in_channels=in_channels).to(device)  # 与 Ours 相同的 in_channels
         model_base.load_state_dict(torch.load(str(ckpt_baseline_path), map_location=device))
         model_base.eval()
 
         # Baseline 采样: zeta_pde=0 (无 Godunov guidance)
+        # IC 条件与 Ours 采样一致: 模型 in_channels 相同, 必须传入相同条件
         print(f"[eval] Baseline Heun 采样 ({heun_steps} steps, pure EDM)...")
         gen_base = entrodiff_heun_sampler(
             model=model_base,
@@ -280,7 +288,8 @@ def eval_viz():
             nu=nu,
             num_steps=heun_steps,
             device=device,
-            zeta_pde=0.0  # Baseline 不使用 PDE guidance
+            zeta_pde=0.0,  # Baseline 不使用 PDE guidance
+            ic=torch.tensor(ic_numpy, device=device).unsqueeze(1) if ic_numpy is not None else None
         ).squeeze().cpu().numpy()
 
         # 三栏图: GT | EDM Baseline | EntroDiff Ours

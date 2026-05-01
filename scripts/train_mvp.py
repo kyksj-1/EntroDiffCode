@@ -94,6 +94,13 @@ def train_mvp():
     # λ_dsm: DSM 损失的权重 (通常固定为 1.0，λ_bv 相对此为惩罚力度)
     lambda_dsm = float(exp_cfg.get("lambda_dsm", 1.0))
 
+    # ---- Conditioning 条件配置 (模块化 IC-conditioning) ----
+    # 从 YAML 读取 conditioning 块; 默认 type="none" (无条件生成), in_channels_extra=0
+    conditioning_cfg = exp_cfg.get("conditioning", {"type": "none", "in_channels_extra": 0})
+    cond_type = conditioning_cfg.get("type", "none")
+    in_channels = 1 + int(conditioning_cfg.get("in_channels_extra", 0))  # 1=noisy_u, +extra=条件通道
+    print(f"  Conditioning: type={cond_type}  in_channels={in_channels}")
+
     # 数据文件缺失时提前退出，避免空跑 (提示用户先运行 generate_data.py)
     if not data_path.exists():
         print(f"Data not found at {data_path}. Run generate_data.py first.")
@@ -103,8 +110,9 @@ def train_mvp():
     # train_dataset 加载后自动按 80/10/10 划分 train/val/test
     # 每次 __getitem__ 返回完整时空轨迹 shape [N_time, N_x]
     # 训练循环中取 batch[:, -1, :] 作为 target 解分布 ρ_T(u) (对应终端时间 T)
+    # conditioning_type 决定 get_conditioning(batch) 的返回类型
     print("Loading Dataset...")
-    train_dataset = BurgersDataset(data_path, mode='train')
+    train_dataset = BurgersDataset(data_path, mode='train', conditioning_type=cond_type)
     train_loader = DataLoader(train_dataset,
                               batch_size=batch_size,
                               shuffle=True,      # 随机打乱，防止时间序偏差
@@ -122,7 +130,8 @@ def train_mvp():
     #   - 前向过程: D_x = c_skip·x + c_out·F_θ(c_in·x, c_noise(σ))
     #   - 含义: 给定带噪输入 x_noisy，直接预测洁净态 x_0 (而非噪声 ε)
     #   - 论文对应: 03_method.tex §3.2 EDM 参数化
-    model = StandardScore(in_channels=2).to(device)  # in_channels=2: noisy_u + IC 条件
+    #   - in_channels: 1 (noisy_u) + conditioning_cfg.in_channels_extra (如 IC=1 → 2)
+    model = StandardScore(in_channels=in_channels).to(device)
     # Adam 优化器: lr 从 YAML 读取，默认 2e-4 (EDM 推荐值)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     # ViscosityMatchedSchedule: 物理驱动的扩散时间 → 噪声强度映射
@@ -161,6 +170,7 @@ def train_mvp():
         log_fp.write(f"# Config: {config_path}\n")
         log_fp.write(f"# Device: {device}  Batch: {batch_size}  Workers: {num_workers}\n")
         log_fp.write(f"# Params: epochs={epochs} lr={lr} nu={nu} tau_max={tau_max} lambda_dsm={lambda_dsm} lambda_bv={lambda_bv} lambda_time={lambda_time}\n")
+        log_fp.write(f"# Conditioning: type={cond_type} in_channels={in_channels}\n")
         log_fp.write(f"# Data: {data_path}\n")
         log_fp.write(f"# Output: {output_dir}\n")
         log_fp.write(f"#\n")
@@ -182,8 +192,10 @@ def train_mvp():
         
         for batch in train_loader:
             # batch shape: [B, N_time, N_x]
-            # ic = 初始条件 (t=0), 作为模型的条件输入
-            ic = batch[:, 0, :].unsqueeze(1).to(device)      # [B, 1, Nx]
+            # 通过数据集模块化接口提取条件张量 (IC / none)
+            cond = train_dataset.get_conditioning(batch)  # [B, 1, Nx] or None
+            if cond is not None:
+                cond = cond.to(device)
             x_target = batch[:, -1, :].unsqueeze(1).to(device)  # [B, 1, Nx]
 
             optimizer.zero_grad()
@@ -197,10 +209,10 @@ def train_mvp():
             #   2. 构造带噪样本 x_noisy = x + σ·ε
             #   3. 模型预测洁净态: D_x = model(x_noisy, σ)
             #   4. 计算 MSE: ‖D_x - x‖² → 等价于 score matching (对 EDM 参数化)
-            loss_dsm = get_dsm_loss(model, x_target, sigmas, ic=ic)
+            loss_dsm = get_dsm_loss(model, x_target, sigmas, conditioning=cond)
             
             # ---- L_BV: Total-Variation 代理损失 (论文 §3.3) ----
-            loss_bv = get_bv_loss(model, x_target, sigmas, ic=ic)
+            loss_bv = get_bv_loss(model, x_target, sigmas, conditioning=cond)
 
             # 联合损失
             loss = lambda_dsm * loss_dsm + lambda_bv * loss_bv
@@ -210,7 +222,7 @@ def train_mvp():
             if lambda_time > 0:
                 x_prev = batch[:, -2, :].unsqueeze(1).to(device)  # [B, 1, Nx]
                 loss_time = get_godunov_time_loss(
-                    model, x_prev, x_target, sigmas, dt=dt_phys, dx=dx_phys, ic=ic
+                    model, x_prev, x_target, sigmas, dt=dt_phys, dx=dx_phys, conditioning=cond
                 )
                 loss = loss + lambda_time * loss_time
             
