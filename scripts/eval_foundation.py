@@ -33,6 +33,7 @@ from src.data.mixed_pde_dataset import MixedPDEDataset
 from src.models.foundation_score import FoundationScore
 from src.models.score_param import BVAwareScore
 from src.diffusion.samplers import entrodiff_heun_sampler
+from src.utils.shock_metrics import compute_all_shock_errs   # SA3: 鲁棒 shock metric
 
 
 # ----------------------------------------------------------------------------
@@ -40,33 +41,40 @@ from src.diffusion.samplers import entrodiff_heun_sampler
 # ----------------------------------------------------------------------------
 
 def compute_shock_location(u: np.ndarray, x_grid: np.ndarray) -> float:
-    """复用 eval_viz.py 的 shock-loc 度量: argmax(|∇u|)."""
+    """复用 eval_viz.py 的 shock-loc 度量: argmax(|∇u|). 保留作 baseline 度量."""
     grad_u = np.abs(np.gradient(u, x_grid))
     return float(x_grid[np.argmax(grad_u)])
 
 
 def compute_metrics(gt: np.ndarray, gen: np.ndarray, x_grid: np.ndarray) -> dict:
     """
-    给定 ground truth 和生成解 (各 (Nx,)), 计算 W1 / L1_rel / shock_err.
+    给定 ground truth 和生成解 (各 (Nx,)), 计算 W1 / L1_rel + 3 种 shock_err.
 
     Args:
         gt:     (Nx,) ground truth
         gen:    (Nx,) 生成解
-        x_grid: (Nx,) 空间坐标 (用于 shock-loc)
+        x_grid: (Nx,) 空间坐标
 
     Returns:
-        {'W1': float, 'L1_rel': float, 'shock_err': float}
+        {'W1': float, 'L1_rel': float,
+         'shock_argmax': float,        # SA3: 旧度量, 兼容
+         'shock_topk3': float,         # SA3: 鲁棒度量 1
+         'shock_threshold': float,     # SA3: 鲁棒度量 2
+         'shock_err': float}           # 主报告 (= shock_argmax) 兼容旧脚本
     """
     # W1: 1D Wasserstein-1, 直接用 scipy
     w1 = float(wasserstein_distance(gt, gen))
-    # L1 相对误差: |y - x|_1 / |x|_1
+    # L1 相对误差
     eps = 1e-8
     l1_rel = float(np.sum(np.abs(gt - gen)) / (np.sum(np.abs(gt)) + eps))
-    # Shock 位置误差
-    sh_gt = compute_shock_location(gt, x_grid)
-    sh_gen = compute_shock_location(gen, x_grid)
-    shock_err = float(abs(sh_gt - sh_gen))
-    return {"W1": w1, "L1_rel": l1_rel, "shock_err": shock_err}
+    # 3 种 shock metric (SA3 鲁棒性诊断)
+    shock_dict = compute_all_shock_errs(gen, gt, x_grid)
+    return {
+        "W1": w1,
+        "L1_rel": l1_rel,
+        **shock_dict,
+        "shock_err": shock_dict["shock_argmax"],   # 兼容旧字段
+    }
 
 
 def build_model_from_ckpt_cfg(cfg: dict, n_pde_types: int, device: torch.device) -> torch.nn.Module:
