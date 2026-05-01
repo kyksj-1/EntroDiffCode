@@ -111,21 +111,20 @@ def test_bvaware_unet_default_unchanged() -> None:
     backbone='unet' 默认: 前向行为与 W5-C 改动前完全一致.
     现有 train_bvaware.py 调用 BVAwareScore(in_channels=2, dim=64) 必须仍工作.
 
-    注: 输出 shape 是 (B, in_C, Nx), 不是 (B, 1, Nx) — 这是 BVAwareScore 现有行为
-    (D_x = x_noisy + σ²·s_θ, shape 跟 x_noisy 走). 与 StandardScore 输出 (B, 1, Nx)
-    不一致是预先存在的 — 不在 W5-C 范围内修复.
+    W5-C 修复 (2026-05-01): 输出 shape 现在是 (B, 1, Nx), 与 StandardScore 对齐.
+    解决了 R7 (sampler+cond shape 错配). ckpt-compatible.
     """
     m = BVAwareScore(in_channels=IN_C, dim=64)  # 不传 backbone → 默认 'unet'
     x = torch.randn(B, IN_C, NX)
     sigma = torch.rand(B) + 1e-2
     # 不传 pde_id 也必须工作
     D = m(x, sigma)
-    assert D.shape == (B, IN_C, NX), \
-        f"BVAware 现有行为: 输出 shape == 输入 shape, 实际 {D.shape}"
+    assert D.shape == (B, 1, NX), \
+        f"W5-C 修复后 BVAware 输出 (B, 1, Nx), 实际 {D.shape}"
 
 
 def test_bvaware_dit_backbone() -> None:
-    """backbone='dit' 时 phi_sm 替换为 DiT, 接口不变 (输出 shape 同 BVAware-UNet)."""
+    """backbone='dit' 时 phi_sm 替换为 DiT, 输出 shape (B, 1, Nx) 与 StandardScore 一致."""
     dit_kw_with_nx = dict(DIT_KW_TINY); dit_kw_with_nx["Nx"] = NX
     m = BVAwareScore(
         in_channels=IN_C,
@@ -137,8 +136,8 @@ def test_bvaware_dit_backbone() -> None:
     sigma = torch.rand(B) + 1e-2
     pde_id = torch.randint(0, 2, (B,))
     D = m(x, sigma, pde_id=pde_id)
-    # BVAware 输出 shape 跟 x 走 (现有行为, 与 UNet 版本一致)
-    assert D.shape == (B, IN_C, NX)
+    # W5-C 修复后: 输出 (B, 1, Nx)
+    assert D.shape == (B, 1, NX)
 
 
 def test_bvaware_dit_grad_flow() -> None:
@@ -266,17 +265,14 @@ def test_sampler_with_foundation_score() -> None:
 
 def test_sampler_with_bvaware_dit() -> None:
     """
-    sampler + BVAware(backbone='dit') 端到端.
+    sampler + BVAware(backbone='dit') 端到端 (W5-C 修复后 R7 解决).
 
-    注: BVAware 的 sampler 通路存在预先 shape 不匹配问题
-    (BVAware 输出 shape 跟输入走, sampler iteration 中会 cat 错误).
-    这是 W5-C 范围外的问题; 此处用 in_channels=1 + 无 conditioning 绕过,
-    专注验证 DiT 集成本身没引入新故障.
+    现在可以直接用 in_channels=2 + cond, 因为 BVAware 输出已对齐 (B, 1, Nx).
     """
     dit_kw_with_nx = dict(DIT_KW_TINY); dit_kw_with_nx["Nx"] = NX
-    # in_channels=1 → 无 cond, 不会触发 cat shape 错配
-    m = BVAwareScore(in_channels=1, backbone="dit",
+    m = BVAwareScore(in_channels=IN_C, backbone="dit",
                      dit_kwargs=dit_kw_with_nx, n_pde_types=2)
+    cond = torch.randn(B, 1, NX)
     pde_id = torch.tensor([0, 1, 0, 1])
     out = entrodiff_heun_sampler(
         m, shape=(B, 1, NX),
@@ -284,8 +280,7 @@ def test_sampler_with_bvaware_dit() -> None:
         tau_max=1.0, nu=1.0,
         num_steps=4, device="cpu",
         zeta_pde=0.0,
-        conditioning=None,    # 关键: 无条件路径
-        pde_id=pde_id,
+        conditioning=cond, pde_id=pde_id,
     )
     assert out.shape == (B, 1, NX)
 
@@ -310,7 +305,8 @@ def test_bvaware_no_pde_id_call() -> None:
     x = torch.randn(B, IN_C, NX)
     sigma = torch.rand(B) + 1e-2
     D = m(x, sigma)
-    assert D.shape == (B, IN_C, NX), "BVAware 现有行为: 输出 shape == 输入 shape"
+    # W5-C 修复后: 输出 (B, 1, Nx)
+    assert D.shape == (B, 1, NX)
 
 
 if __name__ == "__main__":

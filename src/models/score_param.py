@@ -168,7 +168,14 @@ class BVAwareScore(nn.Module):
 
         # 5. Tweedie 反演到去噪器输出 (兼容 EDM loss / Heun sampler)
         #    D_x = x_noisy + σ² · s_θ(x_noisy, σ)
+        #
+        # W5-C 修复 (2026-05-01): 只对第 0 通道 (noisy_u) 做 Tweedie 反演.
+        #   - 与 StandardScore 输出 shape 一致 ((B, 1, Nx))
+        #   - 修复 R7: sampler+cond 路径在 iter 2 cat shape 错配的问题
+        #   - ckpt-compatible: 模型权重不变, 仅输出切片
+        #   - 训练 loss 由 broadcast (B, in_C, Nx) 改为标量 (B, 1, Nx), 信号更干净
         if self.return_denoiser:
-            D_x = x_noisy + (sigma**2).view(-1, 1, 1) * s_theta
+            D_x = x_noisy[:, :1, :] + (sigma**2).view(-1, 1, 1) * s_theta[:, :1, :]
             return D_x
+        # 不反演时仍返回完整 s_theta (debug / 高级用途)
         return s_theta
