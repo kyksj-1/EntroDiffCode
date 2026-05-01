@@ -1,0 +1,61 @@
+# =============================================================================
+# Foundation Model · MULTI-SYSTEMS 配置 (Phase 2 占位)
+#
+# 预期支持: Burgers (1-ch) + Buckley-Leverett (1-ch) + Euler (3-ch)
+#
+# Phase 2 状态 (W5_code_review_20260501.md §C.1):
+#   per-PDE input/output projection 尚未实现, 此配置为占位.
+#   当前 train_foundation.py + DiT1D 仅支持单一 in_channels.
+#   要启用此配置需先做 DiT1D 的 ModuleDict 扩展 (rebuttal 材料).
+# =============================================================================
+
+experiment:
+  name: "foundation_multi_systems"
+  epochs: 300                  # 多 PDE + 多 component 需要更长训练
+  learning_rate: 1.5e-4
+  batch_size: 32               # 系统级降 batch
+  grad_accum_steps: 2
+  use_amp: false
+
+  nu: 1.0
+  tau_max: 1.0
+  ckpt_every: 20
+
+model:
+  type: "dit_bvaware"
+  in_channels: 6               # Phase 2: max_in_channels (3 noisy + 3 IC for Euler)
+  max_out_channels: 3          # Phase 2: max_out_channels (3 for Euler systems)
+
+  dit:
+    Nx: 128
+    dim: 384                   # 多 PDE + 系统级需要更大容量
+    n_layers: 8
+    n_heads: 12
+    patch_size: 4
+    dropout: 0.1
+  # n_pde_types 自动从 data.pdes 长度推导 (= 3)
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.1
+  lambda_time: 0.5
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      n_channels: 1            # Phase 2 字段: 单通道标量 PDE
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      n_channels: 1
+      weight: 1.0
+    - name: "euler_sod"
+      data_file: "euler_sod_1d_N5000_Nx128.npy"
+      flux_type: "euler"
+      n_channels: 3            # 系统级: 3 守恒变量 (ρ, ρu, E)
+      weight: 0.5              # 因为 Euler 数据更丰富, 降权避免过拟合
