@@ -1,0 +1,61 @@
+# =============================================================================
+# Foundation Model · SMALL_PLAIN 配置 (DiT-Plain baseline)
+# 论文对应: §5.6 ablation — DiT-Plain (无 BV-aware 先验) 对照组
+# 工程方案: Docs/black/W5_foundation_engineering_plan.md §2.4.2
+#
+# 与 small.yaml 的唯一关键差异:
+#   - model.type:    dit_bvaware → dit_plain  (去掉 BV-aware 建筑先验)
+#   - lambda_bv:     0.1 → 0.0  (Plain 没有 shock 感知能力, BV 约束反拖慢训练)
+#   - lambda_time:   0.5 → 0.0  (PDE 物理一致性 loss 也不给 Plain — 保持公平消融)
+#
+# 设计动机 (与论文 §5.6 对齐):
+#   "对我们有利" 原则下, Plain baseline 不装备 BV/time 物理 loss.
+#   差距完全来自 BV-aware 建筑先验本身, 而非额外训练 loss.
+#   Plain 仅靠 L_DSM 训练, 是真正的 EDM-style DiT baseline.
+#
+# 估计参数量约 7.0M (与 small DiT-BVAware ~7.4M 接近, BVAware 多了 phi_sh + kappa
+# 两个小 conv 子网 ~0.4M 增量).
+# =============================================================================
+
+experiment:
+  name: "foundation_small_plain"
+  epochs: 200                 # 与 small / big 对齐
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false              # 与 small 对齐 (虽然 Plain 无二阶导, 一致性优先)
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 10
+
+model:
+  type: "dit_plain"           # ← 唯一关键变化: 去掉 BV-aware 先验
+  in_channels: 2
+
+  dit:                        # dit 块与 small.yaml 完全一致, 保证容量公平
+    Nx: 128
+    dim: 256
+    n_layers: 6
+    n_heads: 8
+    patch_size: 4
+    dropout: 0.1
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.0              # ← Plain 不加 BV (没有 BV-aware 能力, 约束无意义)
+  lambda_time: 0.0            # ← Plain 不加 time loss (公平消融)
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0

@@ -1,0 +1,60 @@
+# =============================================================================
+# Foundation Model · BIG 配置 (RTX 5090 24GB 单卡)
+# 论文对应: §5.6 Foundation Model demonstration (BV-aware backbone-agnostic)
+# 工程方案: Docs/black/W5_foundation_engineering_plan.md §2.4.2
+#
+# 与 small.yaml 的差异:
+#   - dit.dim:       256 → 512    (容量翻倍)
+#   - dit.n_layers:  6   → 12     (深度翻倍)
+#   - dit.n_heads:   8   → 16     (heads 翻倍, dim/heads=32 不变)
+#   - 估计参数量约 58M (vs small ~7.4M)
+#   - ckpt_every: 10 → 20  (ckpt 文件大, 减少磁盘占用)
+#
+# 显存预算 (RTX 5090 32GB):
+#   - 模型 ~58M × 4 bytes = 232 MB (fp32)
+#   - autograd.grad create_graph=True 二阶导, 激活内存约 3-4 GB
+#   - batch=64, Nx=128, dim=512, 12 layers → 总占用 ~12-16 GB
+# =============================================================================
+
+experiment:
+  name: "foundation_big"
+  epochs: 200
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false              # BVAware 二阶导 + GradScaler 冲突, 关 AMP
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 20              # 大模型 ckpt 文件大 (~230MB), 间隔放宽
+
+model:
+  type: "dit_bvaware"         # 与 small.yaml 同款, 仅 dit 维度放大
+  in_channels: 2
+
+  dit:
+    Nx: 128
+    dim: 512                  # ← small=256, big=512
+    n_layers: 12              # ← small=6,   big=12
+    n_heads: 16               # ← small=8,   big=16  (dim/heads = 32 不变)
+    patch_size: 4
+    dropout: 0.1
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.1
+  lambda_time: 0.5            # 时间一致性 loss (与 small 对齐)
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0
