@@ -1,0 +1,28 @@
+# =============================================================================
+# E3 · 1D Euler Sod 训练配置
+# 论文对应: §5.4 + A2.2
+# =============================================================================
+experiment:
+  name: "e3_euler_run"
+  epochs: 200                        # 系统 PDE 比标量难, 与 BL 同 epoch
+  learning_rate: 2.0e-4
+
+  nu: 1.0                            # VE-SDE 单位粘度 (σ²=2ντ)
+  tau_max: 1.0
+
+  lambda_bv: 0.1
+  lambda_dsm: 1.0
+
+  heun_steps: 50
+  zeta_pde: 0.0
+
+  # 数据 - 服务器上由 generate_euler_data.py 生成
+  data_file: "euler_sod_1d_N5000_Nx128.npy"
+
+  # 模型 - 系统级 BVAware
+  model_type: "bvaware"
+  use_ic: true
+  in_channels: 6                     # 3 noisy U + 3 IC U_0
+  out_channels: 3                    # 3 守恒变量输出 (ρ, ρu, E)
+  n_components: 3                    # Euler conservative components
+  dim: 128                           # UNet 通道数 (服务器 RTX 3090 充裕)
