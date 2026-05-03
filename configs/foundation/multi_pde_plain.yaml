@@ -1,0 +1,53 @@
+# =============================================================================
+# Foundation Model · MULTI_PDE_PLAIN 配置 (Step 5: 3 PDE DiT-Plain 对照)
+# 论文 §5.4 cross-PDE 对照: Plain (无 BV-aware) vs BV-aware on 3 PDE
+# 与 multi_pde_full.yaml 唯一差异: model.type = dit_plain
+# =============================================================================
+
+experiment:
+  name: "foundation_multi_pde_plain"
+  epochs: 100
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false
+  nu: 1.0
+  tau_max: 1.0
+  ckpt_every: 20
+  use_ema: true
+  ema_decay: 0.9995
+
+model:
+  type: "dit_plain"             # ← 与 full 唯一差异
+  in_channels: 2
+  dit:
+    Nx: 128
+    dim: 256
+    n_layers: 6
+    n_heads: 8
+    patch_size: 4
+    dropout: 0.1
+    n_pde_types: 3
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.0                # Plain 无 BV
+  lambda_time: 0.0              # Plain 无 time loss
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0
+    - name: "euler_density"
+      data_file: "euler_sod_1d_N5000_Nx128.npy"
+      flux_type: "euler_density"
+      channel_slice: 0
+      weight: 1.0

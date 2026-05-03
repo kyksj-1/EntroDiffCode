@@ -110,11 +110,26 @@ def godunov_flux_bl(ul, ur):
     return bl_godunov_flux(ul, ur)
 
 
+def godunov_flux_euler_density(ul, ur):
+    """
+    Step 5: Euler 密度通道 (ρ) 的 Godunov flux (代理).
+
+    严格 Euler 密度方程: ρ_t + (ρu)_x = 0
+    单独看 ρ 通道时缺少 u, 无法严格守恒律. 用 Burgers Godunov 作代理:
+    ρ 当作"速度"处理. 这仅作为 time loss 的物理一致性正则项, 不影响主 W₁.
+
+    论文 §A2 注明 "approximate Godunov flux for Euler density channel".
+    """
+    return godunov_flux(ul, ur)
+
+
 # ---- W5-C: flux 派遣表 (从 flux_type 字符串路由到对应函数) ----
 # 设计: 字典查表; 新增 PDE flux 仅在此表追加项, 不需改 get_godunov_time_loss
+# Step 5 (2026-05-04): 加 'euler_density' 支持 Euler ρ 通道 1D 混训
 _FLUX_REGISTRY = {
     "burgers": godunov_flux,
     "buckley_leverett": godunov_flux_bl,
+    "euler_density": godunov_flux_euler_density,
 }
 
 

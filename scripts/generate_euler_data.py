@@ -9,7 +9,18 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.utils.env_manager import env
-from src.pdes.euler_sod import sod_initial_condition, solve_euler_1d, euler_max_wavespeed
+# 直接加载 euler_sod 模块, 跳过 src/pdes/__init__.py (它有 torch 导入, 数据生成不需要)
+import importlib
+import importlib.util   # Python 3.13: 必须显式 import importlib.util 子模块, 否则 AttributeError
+spec = importlib.util.spec_from_file_location(
+    "euler_sod",
+    Path(__file__).resolve().parent.parent / "src" / "pdes" / "euler_sod.py"
+)
+euler_sod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(euler_sod)
+sod_initial_condition = euler_sod.sod_initial_condition
+solve_euler_1d = euler_sod.solve_euler_1d
+euler_max_wavespeed = euler_sod.euler_max_wavespeed
 from tqdm import tqdm
 from typing import Any
 
@@ -110,17 +121,19 @@ def generate_euler_data(
 
 
 if __name__ == "__main__":
-    NX = 256
-    NT = 500
-    GAMMA = 1.4
-    CFL = 0.4
-    N_SAMPLES = 2000
+    NX = 128            # 标准配置, 与 E1/E2 一致
+    NT = 500            # 时间步
+    N_SAMPLES = 5000    # 标准配置
 
-    output_path = env.data_dir / "euler_sod_N2000_Nx256.npy"
+    output_path = env.data_dir / "euler_sod_1d_N5000_Nx128.npy"  # 标准命名
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = generate_euler_data(n_samples=N_SAMPLES, nx=NX, nt=NT, gamma=GAMMA, cfl=CFL)
-    print(f"Saving Euler Sod data to {output_path} (shape: {data.shape})")
-    print(f"  Size: {data.nbytes / (1024**2):.1f} MB")
+    print(f"Generating {N_SAMPLES} Euler Sod samples (Nx={NX}, Nt={NT})...")
+    print(f"Saving to: {output_path}")
+    
+    data = generate_euler_data(n_samples=N_SAMPLES, nx=NX, nt=NT, gamma=1.4, cfl=0.4)
+    # generate_euler_data 返回 [N, 3, Nt, Nx], EulerDataset 期望 [N, Nt, 3, Nx]
+    data = data.transpose(0, 2, 1, 3)  # → [N, Nt, 3, Nx]
     np.save(output_path, data)
-    print("Done.")
+    print(f"Done. Shape: {data.shape}")
+    print(f"Data file: {output_path}")

@@ -1,0 +1,51 @@
+# =============================================================================
+# Foundation Model · POSTHOC_A_V2 配置 (LearnedLambdaSchedule)
+# 论文对应: §5.6 plug-and-play 升级 — 单一可学方法替代 cherry-picked bv_strength
+#
+# 与 PostHoc-A v1 的差异:
+#   v1 用固定 λ(σ) = exp(-2σ); 不同 setting 最佳 bv_strength 不同
+#   v2 用 LearnedLambdaSchedule(σ, IC) 学习自适应 λ ∈ [0, 5]
+#
+# 训练:
+#   - 仅训 LearnedLambdaSchedule (~8K params)
+#   - Plain backbone (foundation_small_plain ep200) 完全冻结
+#   - L_DSM proxy (与 train_posthoc_bv 同款), 不需 sampler 反向传播
+#   - 50 ep, ~30 分钟在 A800
+# =============================================================================
+
+experiment:
+  name: "foundation_posthoc_a_v2"
+  epochs: 50
+  learning_rate: 1.0e-3        # 比 PostHoc-B 略大 (LearnedLambda 网络更小)
+  batch_size: 64
+  nu: 1.0
+  tau_max: 1.0
+  ckpt_every: 10
+  grad_clip_norm: 1.0
+
+model:
+  type: "learned_lambda"
+  in_channels: 2
+  plain_ckpt: "output/experiments/foundation_small_plain/foundation_foundation_small_plain_20260503_024957_ep200.pt"
+  # ---- LearnedLambdaSchedule 架构 ----
+  hidden: 64
+  freq_dim: 64
+  lam_max: 5.0
+  warm_start_to_v1: true        # 训前 fit 到 exp_decay 行为, 训练初期接近 v1
+
+# 注: train_learned_lambda.py 不读 loss 块 (单 DSM)
+loss:
+  lambda_dsm: 1.0
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0

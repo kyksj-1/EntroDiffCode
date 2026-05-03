@@ -45,13 +45,19 @@ DATASETS = [
      "flux_type": "buckley_leverett", "pde_id": 1},
 ]
 
-# 待对比的 sampler 模式
-SAMPLER_MODES = [
-    {"name": "Plain (no posthoc)",       "bv_strength": 0.0,  "lambda_mode": "exp_decay"},
-    {"name": "Plain + posthoc BV (s=0.5)", "bv_strength": 0.5,  "lambda_mode": "exp_decay"},
-    {"name": "Plain + posthoc BV (s=1.0)", "bv_strength": 1.0,  "lambda_mode": "exp_decay"},
-    {"name": "Plain + posthoc BV (s=2.0)", "bv_strength": 2.0,  "lambda_mode": "exp_decay"},
-]
+# 待对比的 sampler 模式 (默认; 命令行可覆盖 --bv_strengths)
+DEFAULT_BV_STRENGTHS = [0.0, 0.5, 1.0, 2.0]
+
+
+def build_sampler_modes(bv_strengths: list, lambda_mode: str = "exp_decay") -> list:
+    """从 bv_strength 列表 + lambda_mode 构造 SAMPLER_MODES."""
+    modes = []
+    for s in bv_strengths:
+        if s == 0.0:
+            modes.append({"name": "Plain (no posthoc)", "bv_strength": 0.0, "lambda_mode": lambda_mode})
+        else:
+            modes.append({"name": f"Plain + posthoc BV (s={s})", "bv_strength": float(s), "lambda_mode": lambda_mode})
+    return modes
 
 
 def load_test_data(data_path: Path, n_samples: int, test_split_only: bool) -> dict:
@@ -127,30 +133,55 @@ def main():
     parser.add_argument("--ckpt", type=str, default=str(PROJECT_ROOT / DEFAULT_CKPT))
     parser.add_argument("--num_steps", type=int, default=25)
     parser.add_argument("--n_samples", type=int, default=16)
+    parser.add_argument("--n_seeds", type=int, default=1, help="多 seed eval")
+    parser.add_argument("--bv_strengths", type=float, nargs="+", default=DEFAULT_BV_STRENGTHS,
+                        help="bv_strength 列表 (覆盖默认 0/0.5/1.0/2.0)")
+    parser.add_argument("--lambda_mode", type=str, default="exp_decay",
+                        choices=["exp_decay", "inv_linear", "sigmoid"])
     parser.add_argument("--out_dir", type=str, default=None)
     args = parser.parse_args()
 
+    SAMPLER_MODES = build_sampler_modes(args.bv_strengths, args.lambda_mode)
+
     device = torch.device(env.default_device)
-    print(f"[posthoc_a] device={device} num_steps={args.num_steps} n_samples={args.n_samples}")
+    print(f"[posthoc_a] device={device} num_steps={args.num_steps} n_samples={args.n_samples} n_seeds={args.n_seeds}")
     print(f"[posthoc_a] ckpt: {args.ckpt}")
+    print(f"[posthoc_a] sampler modes: {[m['name'] for m in SAMPLER_MODES]}")
 
     out_dir = Path(args.out_dir) if args.out_dir else env.output_dir / "posthoc_a_eval"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Sweep: 4 sampler modes × 5 datasets = 20 evals
+    # Sweep: 每个 (ds, sm) 跑 n_seeds 次取均值
+    import numpy as np_
     results = {}
     for ds in DATASETS:
         for sm in SAMPLER_MODES:
             print(f"\n  [{ds['name']}]  [{sm['name']}]")
-            try:
-                r = evaluate(args.ckpt, ds, sm,
-                             n_samples=args.n_samples, num_steps=args.num_steps,
-                             device=device)
-                results[(ds["name"], sm["name"])] = r
-                print(f"    W₁={r['W1']:.4f}  L¹={r['L1_rel']:.4f}  shock={r['shock_err']:.4f}")
-            except Exception as e:
-                print(f"    [error] {e}")
-                import traceback; traceback.print_exc()
+            per_seed = []
+            for s_i in range(args.n_seeds):
+                seed = 42 + s_i * 1000
+                torch.manual_seed(seed)
+                np_.random.seed(seed)
+                try:
+                    r = evaluate(args.ckpt, ds, sm,
+                                 n_samples=args.n_samples, num_steps=args.num_steps,
+                                 device=device)
+                    per_seed.append(r)
+                    if args.n_seeds > 1:
+                        print(f"    seed={seed:5d}: W₁={r['W1']:.4f}")
+                    else:
+                        print(f"    W₁={r['W1']:.4f}  L¹={r['L1_rel']:.4f}  shock={r['shock_err']:.4f}")
+                except Exception as e:
+                    print(f"    [error] {e}")
+                    import traceback; traceback.print_exc()
+            # 聚合
+            if per_seed:
+                keys = ["W1", "L1_rel", "shock_err"]
+                agg = {k + "_mean": float(np_.mean([r[k] for r in per_seed])) for k in keys}
+                agg.update({k + "_std": float(np_.std([r[k] for r in per_seed])) for k in keys})
+                agg["n_seeds"] = len(per_seed)
+                agg["per_seed"] = per_seed
+                results[(ds["name"], sm["name"])] = agg
 
     # 汇总表
     sm_names = [s["name"] for s in SAMPLER_MODES]
@@ -158,24 +189,39 @@ def main():
 
     md = ["# Post-hoc BV-aware Sampler (方案 A) Eval\n",
           f"- ckpt: foundation_small_plain (DiT-Plain, 7.4M)",
-          f"- num_steps: {args.num_steps}, n_samples: {args.n_samples}\n",
+          f"- num_steps: {args.num_steps}, n_samples: {args.n_samples}, n_seeds: {args.n_seeds}",
+          f"- bv_strengths: {args.bv_strengths}",
+          f"- lambda_mode: {args.lambda_mode}\n",
           "## W₁ ↓ (越低越好)\n"]
-    md.append("| Setting | " + " | ".join(sm_names) + " | 最佳救场 |")
+    if args.n_seeds > 1:
+        md.append("| Setting | " + " | ".join(f"{n} (mean ± std)" for n in sm_names) + " | 最佳救场 |")
+    else:
+        md.append("| Setting | " + " | ".join(sm_names) + " | 最佳救场 |")
     md.append("|" + "---|" * (len(sm_names) + 2))
 
     for ds_name in ds_names:
         row = [ds_name]
-        baseline = results.get((ds_name, "Plain (no posthoc)"), {}).get("W1")
+        baseline = None
         best_posthoc = None
         best_mode = None
         for sm_name in sm_names:
-            v = results.get((ds_name, sm_name), {}).get("W1")
-            row.append(f"{v:.4f}" if v is not None else "---")
-            if "posthoc" in sm_name and v is not None:
+            r = results.get((ds_name, sm_name))
+            if r is None:
+                row.append("---")
+                continue
+            v = r["W1_mean"]
+            if args.n_seeds > 1:
+                cell = f"{v:.4f} ± {r['W1_std']:.4f}"
+            else:
+                cell = f"{v:.4f}"
+            row.append(cell)
+            if "Plain (no posthoc)" in sm_name:
+                baseline = v
+            elif "posthoc" in sm_name.lower():
                 if best_posthoc is None or v < best_posthoc:
                     best_posthoc = v
                     best_mode = sm_name
-        # 最佳救场: best_posthoc 比 baseline 改善多少
+
         if baseline and best_posthoc:
             delta = (baseline - best_posthoc) / baseline * 100
             tag = f"{'✓' if delta > 0 else '✗'} ({delta:+.1f}% by {best_mode.replace('Plain + posthoc BV ', '')})"
@@ -184,26 +230,15 @@ def main():
         row.append(tag)
         md.append("| " + " | ".join(row) + " |")
 
-    md.append("\n## L¹ + shock_err 详细\n")
-    for ds_name in ds_names:
-        md.append(f"### {ds_name}\n")
-        md.append("| Sampler | W₁ | L¹ | shock_err |")
-        md.append("|---|---|---|---|")
-        for sm_name in sm_names:
-            r = results.get((ds_name, sm_name))
-            if r:
-                md.append(f"| {sm_name} | {r['W1']:.4f} | {r['L1_rel']:.4f} | {r['shock_err']:.4f} |")
-            else:
-                md.append(f"| {sm_name} | --- | --- | --- |")
-        md.append("")
-
     md_text = "\n".join(md)
     md_path = out_dir / "summary_posthoc_a.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_text)
     json_path = out_dir / "summary_posthoc_a.json"
+    # JSON keys 序列化
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump({"results": {f"{k[0]}|{k[1]}": v for k, v in results.items()}},
+        json.dump({"args": vars(args),
+                   "results": {f"{k[0]}|{k[1]}": v for k, v in results.items()}},
                   f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 80)

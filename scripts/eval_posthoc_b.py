@@ -50,8 +50,12 @@ def load_test_data(data_path: Path, n_samples: int, test_split_only: bool) -> di
     return {"ic": ic, "x_target": x_target, "n": data.shape[0]}
 
 
-def build_posthoc_b_model(posthoc_b_ckpt: Path, n_pde_types: int, device) -> PostHocBVAwareScore:
-    """加载 posthoc_b ckpt + plain backbone, 重建 PostHocBVAwareScore."""
+def build_posthoc_b_model(posthoc_b_ckpt: Path, n_pde_types: int, device, use_ema: bool = False) -> PostHocBVAwareScore:
+    """加载 posthoc_b ckpt + plain backbone, 重建 PostHocBVAwareScore.
+
+    Args:
+        use_ema: True → 加载 EMA shadow weights (若 ckpt 内有)
+    """
     state = torch.load(str(posthoc_b_ckpt), map_location=device, weights_only=False)
     plain_path = Path(state["plain_ckpt_path"])
     if not plain_path.exists():
@@ -83,8 +87,16 @@ def build_posthoc_b_model(posthoc_b_ckpt: Path, n_pde_types: int, device) -> Pos
         kappa_dim=kappa_dim,
         depth=depth,
     )
-    model.phi_sh_net.load_state_dict(state["phi_sh_net"])
-    model.kappa_net.load_state_dict(state["kappa_net"])
+    # ---- W5 ext: 选用 EMA shadow weights 还是 raw ----
+    if use_ema and "phi_sh_net_ema" in state:
+        model.phi_sh_net.load_state_dict(state["phi_sh_net_ema"])
+        model.kappa_net.load_state_dict(state["kappa_net_ema"])
+        print(f"[load] using EMA weights (decay={state.get('ema_decay', 'N/A')})")
+    else:
+        model.phi_sh_net.load_state_dict(state["phi_sh_net"])
+        model.kappa_net.load_state_dict(state["kappa_net"])
+        if use_ema:
+            print(f"[load] use_ema=True 但 ckpt 无 EMA weights, fallback raw")
     model = model.to(device)
     model.eval()
 
@@ -135,11 +147,13 @@ def main():
                         default="output/experiments/foundation_posthoc_b/posthoc_b_foundation_posthoc_b_20260503_193441_ep50.pt")
     parser.add_argument("--num_steps", type=int, default=25)
     parser.add_argument("--n_samples", type=int, default=16)
+    parser.add_argument("--n_seeds", type=int, default=1, help="多 seed eval (默认 1)")
+    parser.add_argument("--use_ema", action="store_true", help="加载 EMA shadow weights")
     parser.add_argument("--out_dir", type=str, default=None)
     args = parser.parse_args()
 
     device = torch.device(env.default_device)
-    print(f"[posthoc_b_eval] device={device}")
+    print(f"[posthoc_b_eval] device={device}, n_seeds={args.n_seeds}, use_ema={args.use_ema}")
 
     out_dir = Path(args.out_dir) if args.out_dir else env.output_dir / "posthoc_b_eval"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -151,37 +165,62 @@ def main():
         ckpt_path = Path(args.posthoc_b_ckpt)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"posthoc_b ckpt 不存在: {ckpt_path}")
-    model = build_posthoc_b_model(ckpt_path, n_pde_types=2, device=device)
+    model = build_posthoc_b_model(ckpt_path, n_pde_types=2, device=device, use_ema=args.use_ema)
 
-    # 评估
+    # 评估 (n_seeds 个 seed)
+    import numpy as np_
     results = {}
     for ds in DATASETS:
-        print(f"\n  [{ds['name']}]")
-        try:
-            r = evaluate(model, ds, n_samples=args.n_samples, num_steps=args.num_steps, device=device)
-            results[ds["name"]] = r
-            print(f"    W₁={r['W1']:.4f}  L¹={r['L1_rel']:.4f}  shock={r['shock_err']:.4f}")
-        except Exception as e:
-            print(f"    [error] {e}")
-            import traceback; traceback.print_exc()
+        per_seed = []
+        for s_i in range(args.n_seeds):
+            seed = 42 + s_i * 1000
+            torch.manual_seed(seed)
+            np_.random.seed(seed)
+            print(f"\n  [{ds['name']}] seed={seed}")
+            try:
+                r = evaluate(model, ds, n_samples=args.n_samples, num_steps=args.num_steps, device=device)
+                per_seed.append(r)
+                print(f"    W₁={r['W1']:.4f}  L¹={r['L1_rel']:.4f}  shock={r['shock_err']:.4f}")
+            except Exception as e:
+                print(f"    [error] {e}")
+                import traceback; traceback.print_exc()
+        # 聚合
+        if per_seed:
+            keys = ["W1", "L1_rel", "shock_err"]
+            agg = {k + "_mean": float(np_.mean([r[k] for r in per_seed])) for k in keys}
+            agg.update({k + "_std": float(np_.std([r[k] for r in per_seed])) for k in keys})
+            agg["n_seeds"] = len(per_seed)
+            agg["per_seed"] = per_seed
+            results[ds["name"]] = agg
 
     # markdown 输出
-    md = ["# Post-hoc BV-aware (方案 B · trained phi_sh+kappa) Eval\n",
+    md = ["# Post-hoc BV-aware (方案 B" + (" + EMA" if args.use_ema else "") + ") Eval\n",
           f"- ckpt: {ckpt_path.name}",
-          f"- num_steps: {args.num_steps}, n_samples: {args.n_samples}\n",
-          "## W₁ ↓\n"]
-    md.append("| Setting | PostHoc-B W₁ | L¹ | shock_err |")
+          f"- num_steps: {args.num_steps}, n_samples: {args.n_samples}, n_seeds: {args.n_seeds}",
+          f"- use_ema: {args.use_ema}\n",
+          "## W₁ ↓ (mean ± std)\n"]
+
+    if args.n_seeds > 1:
+        md.append("| Setting | PostHoc-B W₁ (mean ± std) | L¹ | shock_err |")
+    else:
+        md.append("| Setting | PostHoc-B W₁ | L¹ | shock_err |")
     md.append("|---|---|---|---|")
     for name, r in results.items():
-        md.append(f"| {name} | {r['W1']:.4f} | {r['L1_rel']:.4f} | {r['shock_err']:.4f} |")
+        if args.n_seeds > 1:
+            md.append(f"| {name} | {r['W1_mean']:.4f} ± {r['W1_std']:.4f} | "
+                     f"{r['L1_rel_mean']:.4f} ± {r['L1_rel_std']:.4f} | "
+                     f"{r['shock_err_mean']:.4f} ± {r['shock_err_std']:.4f} |")
+        else:
+            md.append(f"| {name} | {r['W1_mean']:.4f} | {r['L1_rel_mean']:.4f} | {r['shock_err_mean']:.4f} |")
     md_text = "\n".join(md)
 
-    md_path = out_dir / "summary_posthoc_b.md"
+    suffix = ("_ema" if args.use_ema else "") + (f"_seeds{args.n_seeds}" if args.n_seeds > 1 else "")
+    md_path = out_dir / f"summary_posthoc_b{suffix}.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_text)
-    json_path = out_dir / "summary_posthoc_b.json"
+    json_path = out_dir / f"summary_posthoc_b{suffix}.json"
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump({"ckpt": str(ckpt_path), "results": results},
+        json.dump({"ckpt": str(ckpt_path), "use_ema": args.use_ema, "results": results},
                   f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 80)

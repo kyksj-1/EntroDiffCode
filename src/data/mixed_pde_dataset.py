@@ -101,7 +101,19 @@ class MixedPDEDataset(Dataset):
 
             # 加载完整数据 (复用 BurgersDataset 切分比例 80/10/10)
             print(f"[MixedPDEDataset] 加载 {pde_cfg['name']} ← {data_path}  mode={mode}")
-            data = np.load(str(data_path))  # (N, N_time, N_x)
+            data = np.load(str(data_path))  # (N, N_time, N_x) 或 (N, N_time, C, N_x)
+
+            # ---- Step 5: channel_slice 支持 multi-component PDE (e.g., Euler ρ 通道) ----
+            channel_slice = pde_cfg.get("channel_slice", None)
+            if channel_slice is not None:
+                if data.ndim != 4:
+                    raise ValueError(
+                        f"PDE '{pde_cfg['name']}' channel_slice={channel_slice} 但数据 shape={data.shape} "
+                        f"不是 (N, Nt, C, Nx) 4D 张量"
+                    )
+                print(f"  channel_slice={channel_slice}: {data.shape} → ", end="")
+                data = data[:, :, channel_slice, :]   # (N, Nt, C, Nx) → (N, Nt, Nx)
+                print(f"{data.shape}")
             n_samples = data.shape[0]
             idx_train_end = int(0.8 * n_samples)
             idx_val_end = int(0.9 * n_samples)

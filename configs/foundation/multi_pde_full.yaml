@@ -1,0 +1,64 @@
+# =============================================================================
+# Foundation Model · MULTI_PDE_FULL 配置 (Step 5: Burgers + BL + Euler 1D 混训)
+# 论文对应: §5.4 cross-PDE 升级 (2 → 3 PDE) + §5.6 plug-and-play 跨 3 PDE
+#
+# 与 small.yaml (2 PDE) 的差异:
+#   - data.pdes 加 euler_density (channel_slice=0)
+#   - dit.n_pde_types: 2 → 3
+#   - epochs: 200 → 100 (3 PDE × 4000 train = 12000 sample, 多于 small 的 8000)
+#   - 复用 dit_bvaware backbone 不变
+#
+# 数据 shape 处理:
+#   burgers / bl: (N, 101, 128) — 直接用
+#   euler_sod_1d_N5000_Nx128.npy: (N, 501, 3, 128) — 取 channel_slice=0 → (N, 501, 128)
+#   注: Euler 时间步比 burgers 多 (500 vs 100), 但 dataset 只用 first/last frame, 无影响
+# =============================================================================
+
+experiment:
+  name: "foundation_multi_pde"
+  epochs: 100
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false
+  nu: 1.0
+  tau_max: 1.0
+  ckpt_every: 20
+
+  use_ema: true                 # 默认开 EMA (与 PostHoc-B 一致)
+  ema_decay: 0.9995
+
+model:
+  type: "dit_bvaware"
+  in_channels: 2
+  dit:
+    Nx: 128
+    dim: 256
+    n_layers: 6
+    n_heads: 8
+    patch_size: 4
+    dropout: 0.1
+    n_pde_types: 3                # ← 3 PDE
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.1
+  lambda_time: 0.5
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0
+    - name: "euler_density"
+      data_file: "euler_sod_1d_N5000_Nx128.npy"
+      flux_type: "euler_density"
+      channel_slice: 0              # 取 ρ 通道
+      weight: 1.0
