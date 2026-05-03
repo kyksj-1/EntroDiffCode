@@ -1,0 +1,52 @@
+# =============================================================================
+# Foundation Model · POSTHOC_B 配置 (方案 B · 冻结 plain backbone + 训修正小网)
+# 论文对应: §5.6 修正叙事 — "BV-aware as plug-in modulation, fine-tuned"
+#
+# 关键差异 (与 small.yaml):
+#   - experiment.name:       foundation_posthoc_b   (新独立 ckpt 目录)
+#   - model.type:            posthoc_bv             (新类型, 由 train_posthoc_bv 解析)
+#   - model.plain_ckpt:      指向已训 dit_plain ckpt 路径 (会被冻结)
+#   - epochs:                50 (小网络, 无需 200ep)
+#   - lambda_dsm:            1.0 (单 loss, 不加 BV/time, 训得纯净)
+#   - lambda_bv:             0.0
+#   - lambda_time:           0.0
+#
+# DiT block 与 small/plain 完全相同 (用于初始化 plain backbone, 不直接训)
+# =============================================================================
+
+experiment:
+  name: "foundation_posthoc_b"
+  epochs: 50                  # 小网络快收敛, 50ep 够
+  learning_rate: 5.0e-4       # 比 plain 略大, 加速收敛
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false              # 与 plain 一致
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 10              # 每 10ep 存一次
+
+model:
+  type: "posthoc_bv"          # 新类型, train_posthoc_bv 识别
+  in_channels: 2
+  plain_ckpt: "output/experiments/foundation_small_plain/foundation_foundation_small_plain_20260503_024957_ep200.pt"
+  # plain_backbone 的 dit 配置 (从 plain ckpt 读取 cfg 自动重建, 此处仅留作文档)
+
+loss:
+  lambda_dsm: 1.0             # 单 DSM loss, 训纯净
+  lambda_bv: 0.0
+  lambda_time: 0.0
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0
