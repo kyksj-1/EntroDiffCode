@@ -110,13 +110,26 @@ class PostHocBVAwareScore(nn.Module):
                 nn.Softplus(),
             )
 
-        # 初始化为 small (修正初始为 0, 训练初期 = plain backbone)
-        for m in [self.phi_sh_net, self.kappa_net]:
-            for layer in m.modules():
-                if isinstance(layer, nn.Conv1d):
-                    nn.init.zeros_(layer.weight)
-                    if layer.bias is not None:
-                        nn.init.zeros_(layer.bias)
+        # 初始化策略 (2026-05-04 bug fix · 关键!):
+        #   旧: phi_sh_net + kappa_net 全 zero_init → 死锁 (诊断证实 50ep 后 phi_sh_net abs_mean=0)
+        #   原因: phi_sh = 0 → tanh(0)=0 + grad_phi_sh=空间差分 of 0 = 0 → bv_correction=0
+        #         → loss 不依赖 phi_sh_net 参数 → 梯度永远 0 → phi_sh_net 永远 zero_init
+        #   新 (经梯度量级实测调优):
+        #     phi_sh_net: std=0.05 (std=0.01 时梯度 ~1e-9 太小 250 ep 进步不明显;
+        #                          std=0.05 让 phi_sh ~ 0.05, tanh(0.05/0.5)~0.1,
+        #                          bv_correction ~ 0.69·0.1·O(0.05·N) ~ O(0.003·N), 梯度量级 ~1e-3,
+        #                          训练有效且初始 D_x 偏离 D_plain 受控)
+        #     kappa_net:  仍 zero_init (Softplus 让 kappa 起始 ≈ ln(2) ≈ 0.69, 可控幅度)
+        for layer in self.phi_sh_net.modules():
+            if isinstance(layer, nn.Conv1d):
+                nn.init.normal_(layer.weight, mean=0.0, std=0.05)   # ← 关键 fix: std=0.05
+                if layer.bias is not None:
+                    nn.init.zeros_(layer.bias)
+        for layer in self.kappa_net.modules():
+            if isinstance(layer, nn.Conv1d):
+                nn.init.zeros_(layer.weight)
+                if layer.bias is not None:
+                    nn.init.zeros_(layer.bias)
 
     def forward(
         self,
