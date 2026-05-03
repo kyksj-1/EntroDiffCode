@@ -1,0 +1,45 @@
+# =============================================================================
+# 实验 B1: DiT Plain on small data (1000 samples, capacity 控制)
+# 5-seed × 200ep
+# 假设: 5000 samples + DiT 7.4M = Plain 学得"过完美", BVA 无补充空间
+# 控制: 减少训练样本到 1000, 让 Plain 学不那么完美, BVA 能体现优势
+# =============================================================================
+experiment:
+  name: "revisit_dit_plain_small_data"
+  epochs: 200
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false
+  nu: 1.0
+  tau_max: 1.0
+  ckpt_every: 50
+  use_ema: true
+  ema_decay: 0.9995
+
+model:
+  type: "dit_plain"
+  in_channels: 2
+  dit:
+    Nx: 128
+    dim: 256
+    n_layers: 6
+    n_heads: 8
+    patch_size: 4
+    dropout: 0.1
+    n_pde_types: 1
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.0
+  lambda_time: 0.0
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  data_limit: 1000          # ← 关键: 仅用 1000 samples (vs 5000)
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0

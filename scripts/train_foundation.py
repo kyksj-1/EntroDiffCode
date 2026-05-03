@@ -208,7 +208,8 @@ def train(args: argparse.Namespace) -> None:
 
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     exp_name = exp_cfg["name"]
-    output_dir = env.output_dir / exp_name
+    seed_tag = f"_s{args.seed}" if hasattr(args, 'seed') and args.seed != 42 else ""
+    output_dir = env.output_dir / (exp_name + seed_tag)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     epochs = int(exp_cfg.get("epochs", 50))
@@ -226,6 +227,12 @@ def train(args: argparse.Namespace) -> None:
 
     # ---- 数据 ----
     pdes = data_cfg["pdes"]
+    # Revisit 实验 (2026-05-04): yaml 顶层 data.data_limit 传给每 PDE
+    global_data_limit = data_cfg.get("data_limit", None)
+    if global_data_limit is not None:
+        for p in pdes:
+            p.setdefault("data_limit", global_data_limit)
+        print(f"  [data_limit] 全局 train sample 限制: {global_data_limit}")
     train_dataset = MixedPDEDataset(
         pdes_config=pdes,
         data_dir=env.data_dir,
@@ -360,5 +367,11 @@ if __name__ == "__main__":
         "--resume", type=str, default=None,
         help="从 checkpoint 恢复训练 (.pt 路径)"
     )
+    parser.add_argument("--seed", type=int, default=42, help="random seed (revisit 5-seed 实验)")
     args = parser.parse_args()
+    # 设置 seed
+    import torch
+    import numpy as np
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
     train(args)

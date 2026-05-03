@@ -1,0 +1,22 @@
+# =============================================================================
+# 实验 A1: UNet StandardScore (revisit 论文 §5.2 主线 baseline)
+# 5-seed × 200ep, 复刻论文表中 "EDM Baseline / StandardScore" 行
+# 配置:
+#   - StandardScore (UNet1D, dim=128) + ViscosityMatchedSchedule + DSM only
+#   - lambda_bv=0 (无 BV 正则, 纯 EDM baseline)
+#   - 200 ep (与 BVAware 主线一致)
+# =============================================================================
+experiment:
+  name: "revisit_unet_standard"
+  epochs: 200
+  learning_rate: 2.0e-4
+  nu: 1.0
+  tau_max: 1.0
+  lambda_bv: 0.0           # ← 关键: standard 无 BV
+  lambda_dsm: 1.0
+  lambda_time: 0.0
+  heun_steps: 50
+  zeta_pde: 0.0
+  conditioning:
+    type: "ic"
+    in_channels_extra: 1

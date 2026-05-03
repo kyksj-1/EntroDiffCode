@@ -49,7 +49,16 @@ def train_mvp():
                         help="实验超参数配置文件 (相对于 PROJECT/black/ 的路径)")
     parser.add_argument("--resume", type=str, default=None,
                         help="从指定 checkpoint 恢复训练 (e.g. entrodiff_xxx_ep10.pt)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="random seed (multi-seed 训练)")
+    parser.add_argument("--data_limit", type=int, default=None,
+                        help="限制训练样本数 (None=全部, 用于 capacity 控制实验)")
     args = parser.parse_args()
+
+    # 设置 seed (revisit 实验 §5.2 主线: 5-seed mean ± std)
+    import numpy as np
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
     
     # ========== 1. 加载环境与实验配置 ==========
 
@@ -74,8 +83,10 @@ def train_mvp():
 
     # 实验命名: 用于区分不同超参数组合的输出子目录
     exp_name = exp_cfg.get("name", "mvp_run")
-    # 输出目录: {env.output_dir}/{exp_name}/ 下存放 checkpoint 和 TensorBoard 日志
-    output_dir = env.output_dir / exp_name
+    # revisit 实验: 加 _s{seed} 后缀 (与 train_posthoc_bv.py 一致)
+    seed_tag = f"_s{args.seed}" if args.seed != 42 else ""
+    # 输出目录: {env.output_dir}/{exp_name}{seed_tag}/ 下存放 checkpoint 和 TensorBoard 日志
+    output_dir = env.output_dir / (exp_name + seed_tag)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # ---- 训练超参数 (均从 YAML 读取，含默认值兜底) ----
@@ -113,6 +124,10 @@ def train_mvp():
     # conditioning_type 决定 get_conditioning(batch) 的返回类型
     print("Loading Dataset...")
     train_dataset = BurgersDataset(data_path, mode='train', conditioning_type=cond_type)
+    # revisit 实验: 限制训练样本 (capacity 控制实验, 让 Plain 不过拟合)
+    if args.data_limit is not None and args.data_limit < len(train_dataset.data):
+        train_dataset.data = train_dataset.data[:args.data_limit]
+        print(f"  [data_limit] 限制训练样本: {args.data_limit} (原 {train_dataset.data.shape[0]})")
     train_loader = DataLoader(train_dataset,
                               batch_size=batch_size,
                               shuffle=True,      # 随机打乱，防止时间序偏差

@@ -1,0 +1,17 @@
+# =============================================================================
+# 实验 A2: UNet BVAwareScore (revisit 论文 §5.2 主线核心方法)
+# 5-seed × 200ep
+# 配置: BVAwareScore (UNet, dim=128) + Viscosity-Matched + DSM + BV
+# 与 revisit_unet_standard 唯一差异: model = BVAwareScore + lambda_bv=0.1
+# =============================================================================
+experiment:
+  name: "revisit_unet_bvaware"
+  epochs: 200
+  learning_rate: 2.0e-4
+  nu: 1.0
+  tau_max: 1.0
+  lambda_bv: 0.1           # ← BV 正则 ON
+  lambda_dsm: 1.0
+  heun_steps: 50
+  zeta_pde: 0.0
+  data_file: "burgers_1d_N5000_Nx128.npy"

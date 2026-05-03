@@ -39,7 +39,15 @@ def train_bvaware():
                         help="从 checkpoint 恢复训练")
     parser.add_argument("--dim", type=int, default=128,
                         help="UNet 基础通道数 (PC=64, 服务器=128~256)")
+    parser.add_argument("--seed", type=int, default=42, help="random seed (revisit 5-seed)")
+    parser.add_argument("--data_limit", type=int, default=None,
+                        help="限制训练样本数 (capacity 控制实验)")
     args = parser.parse_args()
+
+    # 设置 seed (revisit 实验)
+    import numpy as np
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
     # ========== 1. 加载配置 ==========
     device = torch.device(env.default_device)
@@ -54,7 +62,8 @@ def train_bvaware():
     data_path = env.data_dir / exp_cfg.get("data_file", "burgers_1d_N5000_Nx128.npy")
 
     exp_name = exp_cfg.get("name", "bvaware_run")
-    output_dir = env.output_dir / exp_name
+    seed_tag = f"_s{args.seed}" if args.seed != 42 else ""
+    output_dir = env.output_dir / (exp_name + seed_tag)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     epochs = exp_cfg.get("epochs", 200)
@@ -71,6 +80,9 @@ def train_bvaware():
     # ========== 2. 数据加载 ==========
     print(f"加载数据: {data_path}")
     train_dataset = BurgersDataset(data_path, mode='train')
+    if args.data_limit is not None and args.data_limit < len(train_dataset.data):
+        train_dataset.data = train_dataset.data[:args.data_limit]
+        print(f"  [data_limit] 限制训练样本: {args.data_limit}")
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
                               shuffle=True, num_workers=num_workers)
 

@@ -1,0 +1,45 @@
+# =============================================================================
+# 实验 B2: DiT BVAware on small data (1000 samples, capacity 控制)
+# 5-seed × 200ep
+# 配置: dit_bvaware backbone + 同 small data
+# 与 B1 (Plain) 唯一差异: model.type = dit_bvaware + lambda_bv = 0.1
+# =============================================================================
+experiment:
+  name: "revisit_dit_bvaware_small_data"
+  epochs: 200
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false
+  nu: 1.0
+  tau_max: 1.0
+  ckpt_every: 50
+  use_ema: true
+  ema_decay: 0.9995
+
+model:
+  type: "dit_bvaware"       # ← BVAware backbone
+  in_channels: 2
+  dit:
+    Nx: 128
+    dim: 256
+    n_layers: 6
+    n_heads: 8
+    patch_size: 4
+    dropout: 0.1
+    n_pde_types: 1
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.1            # ← BV 正则 ON
+  lambda_time: 0.5
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  data_limit: 1000          # ← 与 B1 同, 1000 samples
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0

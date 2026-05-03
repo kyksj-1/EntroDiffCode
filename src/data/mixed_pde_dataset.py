@@ -121,6 +121,12 @@ class MixedPDEDataset(Dataset):
             # 按 mode 切片 (与 BurgersDataset 完全一致, 复现性逐字节对齐)
             if mode == "train":
                 split = data[:idx_train_end]
+                # Step revisit (2026-05-04): 训练样本上限 (capacity 控制实验)
+                # data_limit 仅作用于 train split, val/test 保持原样以保证 eval 公平
+                pde_data_limit = pde_cfg.get("data_limit", None)
+                if pde_data_limit is not None and pde_data_limit < split.shape[0]:
+                    split = split[:pde_data_limit]
+                    print(f"  [data_limit] {pde_cfg['name']} 训练限制: {pde_data_limit} (原 {idx_train_end})")
             elif mode == "val":
                 split = data[idx_train_end:idx_val_end]
             else:
