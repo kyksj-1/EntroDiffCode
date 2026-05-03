@@ -1,0 +1,60 @@
+# =============================================================================
+# Foundation Model · SMALL_LITE 配置 (诊断救场实验)
+# 论文对应: §5.6 ablation — 调小 BV/time 正则强度, 看是否反超 Plain
+#
+# 设计动机:
+#   当前 small.yaml (lambda_bv=0.1, lambda_time=0.5) BVA 在 in-dist 输给 Plain.
+#   假设: BV/time 正则项过强, 把 DSM 训练目标拽偏.
+#   small_lite: lambda_bv 减半 (0.05), lambda_time 减 5x (0.1).
+#   若 small_lite 反超 Plain → 救场, 论文 §5.6 改写为 "lambda 需精调".
+#   若仍输 Plain → 更明确指出 BV-aware 在 DiT 上对当前 setup 不奏效.
+#
+# 与 small.yaml 的唯一关键差异:
+#   - experiment.name:      foundation_small → foundation_small_lite (避免覆盖)
+#   - loss.lambda_bv:       0.1  → 0.05  (减半)
+#   - loss.lambda_time:     0.5  → 0.1   (5x 减)
+# 其他字段 (model.type=dit_bvaware, dit.dim=256, epochs=200, ...) 与 small 完全一致.
+# =============================================================================
+
+experiment:
+  name: "foundation_small_lite"   # 独立 ckpt 目录, 避免覆盖 small/
+  epochs: 200
+  learning_rate: 2.0e-4
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false              # 与 small.yaml 一致
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 10
+
+model:
+  type: "dit_bvaware"         # 与 small 同款 backbone
+  in_channels: 2
+
+  dit:                        # 与 small.yaml 完全一致
+    Nx: 128
+    dim: 256
+    n_layers: 6
+    n_heads: 8
+    patch_size: 4
+    dropout: 0.1
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.05             # ← 关键调整: 0.1 → 0.05
+  lambda_time: 0.1            # ← 关键调整: 0.5 → 0.1
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0
