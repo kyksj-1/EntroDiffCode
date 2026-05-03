@@ -70,7 +70,19 @@ def build_posthoc_b_model(posthoc_b_ckpt: Path, n_pde_types: int, device) -> Pos
     plain_backbone.load_state_dict(plain_state["model"])
     plain_backbone = plain_backbone.to(device)
 
-    model = PostHocBVAwareScore(plain_backbone=plain_backbone, in_channels=in_channels)
+    # W5 ext: 从 ckpt 内 cfg 读 phi_sh_dim/kappa_dim/depth (默认小版)
+    posthoc_b_cfg = state["config"]["model"]
+    phi_sh_dim = int(posthoc_b_cfg.get("phi_sh_dim", 32))
+    kappa_dim = int(posthoc_b_cfg.get("kappa_dim", 16))
+    depth = int(posthoc_b_cfg.get("depth", 2))
+
+    model = PostHocBVAwareScore(
+        plain_backbone=plain_backbone,
+        in_channels=in_channels,
+        phi_sh_dim=phi_sh_dim,
+        kappa_dim=kappa_dim,
+        depth=depth,
+    )
     model.phi_sh_net.load_state_dict(state["phi_sh_net"])
     model.kappa_net.load_state_dict(state["kappa_net"])
     model = model.to(device)

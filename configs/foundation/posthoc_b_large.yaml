@@ -1,0 +1,51 @@
+# =============================================================================
+# Foundation Model · POSTHOC_B_LARGE 配置 (方案 B 调大版本)
+# 论文对应: §5.6 ablation — phi_sh + kappa 容量调大, 看 5/5 setting 是否全胜 Plain
+#
+# 与 posthoc_b.yaml 的差异:
+#   - phi_sh_dim:  32 → 64
+#   - kappa_dim:   16 → 32
+#   - depth:       2  → 3 (3 层 conv 而非 2 层)
+#   - epochs:      50 → 80 (大网络多训点)
+# 估计 trainable params: ~7K (vs 386 小版)
+# =============================================================================
+
+experiment:
+  name: "foundation_posthoc_b_large"
+  epochs: 80
+  learning_rate: 3.0e-4       # 大网络 lr 略小
+  batch_size: 64
+  grad_accum_steps: 1
+  use_amp: false
+
+  nu: 1.0
+  tau_max: 1.0
+
+  ckpt_every: 20
+
+model:
+  type: "posthoc_bv"
+  in_channels: 2
+  plain_ckpt: "output/experiments/foundation_small_plain/foundation_foundation_small_plain_20260503_024957_ep200.pt"
+  # ---- W5 ext: 调大 phi_sh + kappa ----
+  phi_sh_dim: 64              # 32 → 64
+  kappa_dim: 32               # 16 → 32
+  depth: 3                    # 2 → 3 (3 层 conv)
+
+loss:
+  lambda_dsm: 1.0
+  lambda_bv: 0.0
+  lambda_time: 0.0
+
+data:
+  conditioning_type: "ic"
+  mix_strategy: "uniform"
+  pdes:
+    - name: "burgers"
+      data_file: "burgers_1d_N5000_Nx128.npy"
+      flux_type: "burgers"
+      weight: 1.0
+    - name: "buckley_leverett"
+      data_file: "bl_1d_N5000_Nx128.npy"
+      flux_type: "buckley_leverett"
+      weight: 1.0

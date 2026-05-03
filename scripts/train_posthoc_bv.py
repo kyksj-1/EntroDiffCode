@@ -108,10 +108,17 @@ def main():
 
     # ---- 包装为 PostHocBVAwareScore ----
     in_channels = int(model_cfg.get("in_channels", 2))
+    # W5 ext: 支持调大 phi_sh / kappa 网络
+    phi_sh_dim = int(model_cfg.get("phi_sh_dim", 32))
+    kappa_dim = int(model_cfg.get("kappa_dim", 16))
+    depth = int(model_cfg.get("depth", 2))
     model = PostHocBVAwareScore(
         plain_backbone=plain_backbone,
         in_channels=in_channels,
         sigma_data=0.5,
+        phi_sh_dim=phi_sh_dim,
+        kappa_dim=kappa_dim,
+        depth=depth,
     )
     model = model.to(device)
 

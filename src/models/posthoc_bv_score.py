@@ -57,6 +57,9 @@ class PostHocBVAwareScore(nn.Module):
         plain_backbone: FoundationScore,
         in_channels: int = 2,
         sigma_data: float = 0.5,
+        phi_sh_dim: int = 32,           # W5 ext: 增大版用 64
+        kappa_dim: int = 16,            # W5 ext: 增大版用 32
+        depth: int = 2,                 # W5 ext: 默认 2 层 (= 小版); 3 层 = 大版
     ) -> None:
         super().__init__()
         self.plain_backbone = plain_backbone
@@ -67,21 +70,45 @@ class PostHocBVAwareScore(nn.Module):
 
         self.in_channels = in_channels
         self.sigma_data = sigma_data
+        self.phi_sh_dim = phi_sh_dim
+        self.kappa_dim = kappa_dim
+        self.depth = depth
 
-        # phi_sh: signed distance to shock (与 BVAwareScore 同款 conv stack)
-        self.phi_sh_net = nn.Sequential(
-            nn.Conv1d(in_channels, 32, kernel_size=3, padding=1),
-            nn.SiLU(),
-            nn.Conv1d(32, 1, kernel_size=3, padding=1),   # 输出 1 通道 (单 PDE 标量)
-        )
+        # phi_sh: signed distance to shock
+        if depth == 2:
+            # 默认小版 (~321 params at dim=32)
+            self.phi_sh_net = nn.Sequential(
+                nn.Conv1d(in_channels, phi_sh_dim, kernel_size=3, padding=1),
+                nn.SiLU(),
+                nn.Conv1d(phi_sh_dim, 1, kernel_size=3, padding=1),
+            )
+        else:
+            # 大版 3 层 (~6.7K params at phi_sh_dim=64)
+            self.phi_sh_net = nn.Sequential(
+                nn.Conv1d(in_channels, phi_sh_dim, kernel_size=3, padding=1),
+                nn.SiLU(),
+                nn.Conv1d(phi_sh_dim, phi_sh_dim // 2, kernel_size=3, padding=1),
+                nn.SiLU(),
+                nn.Conv1d(phi_sh_dim // 2, 1, kernel_size=3, padding=1),
+            )
 
-        # kappa: jump amplitude (与 BVAwareScore 同款)
-        self.kappa_net = nn.Sequential(
-            nn.Conv1d(in_channels, 16, kernel_size=1),
-            nn.SiLU(),
-            nn.Conv1d(16, 1, kernel_size=1),
-            nn.Softplus(),
-        )
+        # kappa: jump amplitude
+        if depth == 2:
+            self.kappa_net = nn.Sequential(
+                nn.Conv1d(in_channels, kappa_dim, kernel_size=1),
+                nn.SiLU(),
+                nn.Conv1d(kappa_dim, 1, kernel_size=1),
+                nn.Softplus(),
+            )
+        else:
+            self.kappa_net = nn.Sequential(
+                nn.Conv1d(in_channels, kappa_dim, kernel_size=1),
+                nn.SiLU(),
+                nn.Conv1d(kappa_dim, kappa_dim // 2, kernel_size=1),
+                nn.SiLU(),
+                nn.Conv1d(kappa_dim // 2, 1, kernel_size=1),
+                nn.Softplus(),
+            )
 
         # 初始化为 small (修正初始为 0, 训练初期 = plain backbone)
         for m in [self.phi_sh_net, self.kappa_net]:
