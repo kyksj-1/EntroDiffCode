@@ -8,17 +8,24 @@ class StandardScore(nn.Module):
     """
     Standard EDM parameterization: D_theta(x, sigma)
     predicts the denoised x_0, from which score is derived.
+
+    Args:
+        in_channels:  输入通道数 (noisy + conditioning)
+        out_channels: 输出通道数, 即 noisy 分量数 (默认 1, 标量 PDE;
+                      系统级 PDE 如 Euler 设 3)
+        sigma_data:   EDM 数据标准差 (默认 0.5)
     """
-    def __init__(self, in_channels=1, sigma_data=0.5):
+    def __init__(self, in_channels=1, sigma_data=0.5, out_channels: int = 1):
         super().__init__()
-        self.net = UNet1D(in_channels=in_channels, out_channels=1)  # 始终输出 1-ch (IC 仅作条件输入)
+        self.out_channels = out_channels
+        self.net = UNet1D(in_channels=in_channels, out_channels=out_channels)
         self.sigma_data = sigma_data
 
     def forward(self, x, sigma, pde_id: Optional[torch.Tensor] = None):
         """
         EDM preconditions.
         c_skip * x + c_out * F_theta(c_in * x, c_noise(sigma))
-        x 含 in_channels 通道 (noisy_u + IC), 仅第 0 通道参与 skip connection
+        x 含 in_channels 通道 (noisy_u + IC), 仅前 out_channels 通道参与 skip connection
 
         pde_id: 兼容性参数 (W5-C 新增, 默认 None) — UNet 不消费, 仅供 mixed-PDE 训练时透传
         """
@@ -30,7 +37,8 @@ class StandardScore(nn.Module):
         F_x = self.net(c_in[:, None, None] * x, c_noise)
 
         # c_skip * x_0: 仅对 noisy 通道做 skip (IC 通道不参与)
-        D_x = c_skip[:, None, None] * x[:, :1, :] + c_out[:, None, None] * F_x
+        # 切前 out_channels 通道 (对应 noisy 部分, 非 conditioning)
+        D_x = c_skip[:, None, None] * x[:, :self.out_channels, :] + c_out[:, None, None] * F_x
         return D_x
 
 class BVAwareScore(nn.Module):

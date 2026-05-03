@@ -1,28 +1,39 @@
 # =============================================================================
-# E3 · 1D Euler Sod 训练配置
-# 论文对应: §5.4 + A2.2
+# E3 · 1D Euler Sod 激波管实验配置
+# 三组分守恒律 (ρ, ρu, E), shock + 接触间断 + 稀疏波 三波结构
+# 论文对应: §5.4 (Euler Sod 激波管) + A2.2 (三组分守恒律方案)
 # =============================================================================
 experiment:
   name: "e3_euler_run"
-  epochs: 200                        # 系统 PDE 比标量难, 与 BL 同 epoch
+  epochs: 200                                 # 系统 PDE 比标量难, 与 BL 同量级
   learning_rate: 2.0e-4
 
-  nu: 1.0                            # VE-SDE 单位粘度 (σ²=2ντ)
-  tau_max: 1.0
+  # --- VE-SDE 参数 (Eq. 3.1) ---
+  nu: 1.0                                     # VE-SDE 单位粘度 (σ² = 2ντ)
+  tau_max: 1.0                                # 最大扩散时间
 
-  lambda_bv: 0.1
-  lambda_dsm: 1.0
+  # --- Loss 权重 (Eq. 3.6) ---
+  lambda_bv: 0.1                              # L_BV 有界变差正则化系数
+  lambda_dsm: 1.0                             # L_DSM 降噪得分匹配系数
+  lambda_time: 1.0                            # L_time Godunov 时间一致性损失系数
 
-  heun_steps: 50
-  zeta_pde: 0.0
+  # --- 采样 ---
+  heun_steps: 50                              # Heun 二阶 ODE 积分步数 (Algorithm 1)
+  zeta_pde: 0.0                               # PDE guidance 权重 (0 = 无条件采样)
 
-  # 数据 - 服务器上由 generate_euler_data.py 生成
+  # --- 优化 ---
+  ema_decay: 0.9999                           # 指数移动平均衰减率 (用于采样模型平滑)
+  lr_scheduler: "cosine"                      # 学习率调度策略 (cosine annealing)
+  grad_clip_norm: 1.0                         # 梯度裁剪最大范数 (防止 shock 处梯度爆炸)
+
+  # --- 数据 ---
+  # 服务器端由 generate_euler_data.py 生成
   data_file: "euler_sod_1d_N5000_Nx128.npy"
 
-  # 模型 - 系统级 BVAware
-  model_type: "bvaware"
-  use_ic: true
-  in_channels: 6                     # 3 noisy U + 3 IC U_0
-  out_channels: 3                    # 3 守恒变量输出 (ρ, ρu, E)
-  n_components: 3                    # Euler conservative components
-  dim: 128                           # UNet 通道数 (服务器 RTX 3090 充裕)
+  # --- 模型架构 ---
+  model_type: "bvaware"                       # BV-aware 得分参数化 (Eq. 3.4)
+  use_ic: true                                # 启用初始条件条件化
+  in_channels: 6                              # 3 noisy U + 3 IC U_0 (三组分各含噪声与初值)
+  out_channels: 3                             # 3 守恒变量输出 (ρ, ρu, E)
+  n_components: 3                             # Euler 守恒律组分数
+  dim: 128                                    # UNet 隐藏通道数 (RTX 3090 充裕)
