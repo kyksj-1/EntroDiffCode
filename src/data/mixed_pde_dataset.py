@@ -184,9 +184,9 @@ class MixedPDEDataset(Dataset):
 
         Returns:
             dict:
-                trajectory: (N_time, Nx) float32  完整时空轨迹
+                trajectory: (2, Nx) float32  仅倒数 2 帧 (Step 5 修复: 跨 PDE N_time 异质 stack 不齐, 仅保留 [t-1, t] 两帧)
                 ic:         (1, Nx)     float32  首帧 (IC); conditioning='none' 时也返回, 由训练脚本决定是否使用
-                x_target:   (1, Nx)     float32  末帧 (训练目标)
+                x_target:   (1, Nx)     float32  末帧 (训练目标) = trajectory[-1]
                 pde_id:     int                  PDE 索引 (0..N-1)
                 pde_name:   str                  便于 debug / logging
         """
@@ -195,13 +195,16 @@ class MixedPDEDataset(Dataset):
         data = self._per_pde_data[pde_id][local_idx]   # (N_time, Nx)
         meta = self._per_pde_meta[pde_id]
 
-        trajectory = torch.tensor(data, dtype=torch.float32)
+        trajectory_full = torch.tensor(data, dtype=torch.float32)
         # 首帧 ic, 末帧 x_target (与 train_bvaware.py / BurgersDataset 约定一致)
-        ic = trajectory[0:1, :].clone()           # (1, Nx)
-        x_target = trajectory[-1:, :].clone()     # (1, Nx)
+        ic = trajectory_full[0:1, :].clone()           # (1, Nx)
+        x_target = trajectory_full[-1:, :].clone()     # (1, Nx)
+        # Step 5 (2026-05-04): 跨 PDE N_time 异质 (e.g., Euler 501, Burgers 101), 完整 trajectory stack 失败
+        # 仅保留 time loss 需要的倒数 2 帧 (t-1, t), shape 跨 PDE 统一为 (2, Nx)
+        trajectory = trajectory_full[-2:, :].clone()    # (2, Nx)
 
         return {
-            "trajectory": trajectory,             # (N_time, Nx)
+            "trajectory": trajectory,             # (2, Nx) — 仅最后两帧 (Step 5 修复)
             "ic": ic,                              # (1, Nx)
             "x_target": x_target,                  # (1, Nx)
             "pde_id": pde_id,                      # int (Python 标量)
